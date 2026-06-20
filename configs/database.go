@@ -20,24 +20,28 @@ func NewConnection(config *Config) (*DB, error) {
 		return nil, err
 	}
 
+	slog.Info("Configurando pools de conexões de escrita...")
+	configurePool(writeDB, config.DatabaseWriteProperties)
+
+	slog.Info("Verificando conexões com os bancos de dados de escrita...")
+	if err := writeDB.Ping(); err != nil {
+		_ = writeDB.Close()
+		return nil, err
+	}
+
 	slog.Info("Estabelecendo conexões com os bancos de dados de leitura...")
 	readDB, err := sql.Open("pgx", config.DatabaseReadProperties.DATABASE_DSN)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.Info("Configurando pools de conexões de escrita...")
-	configurePool(writeDB, config.DatabaseWriteProperties)
 	slog.Info("Configurando pools de conexões de leitura...")
 	configurePool(readDB, config.DatabaseReadProperties)
 
-	slog.Info("Verificando conexões com os bancos de dados de escrita...")
-	if err := writeDB.Ping(); err != nil {
-		return nil, err
-	}
-
 	slog.Info("Verificando conexões com os bancos de dados de leitura...")
 	if err := readDB.Ping(); err != nil {
+		_ = writeDB.Close()
+		_ = readDB.Close()
 		return nil, err
 	}
 

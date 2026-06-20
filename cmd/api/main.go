@@ -37,7 +37,7 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr:    ":" + properties.System.Port,
+		Addr:    ":" + properties.Server.Port,
 		Handler: router.New(handlers, logger.New(properties.Logger), properties.EnablePprof),
 	}
 
@@ -47,7 +47,7 @@ func main() {
 
 	// Rodar servidor em goroutine
 	go func() {
-		slog.Info("Servidor HTTP rodando", "port", properties.System.Port)
+		slog.Info("Servidor HTTP rodando", "port", properties.Server.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Erro no servidor HTTP", "error", err)

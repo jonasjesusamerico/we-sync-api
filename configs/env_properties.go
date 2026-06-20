@@ -13,7 +13,7 @@ import (
 type Config struct {
 	AppEnvName              string
 	EnablePprof             bool
-	System                  SystemProperties
+	Server                  ServerProperties
 	DatabaseWriteProperties DatabaseProperties
 	DatabaseReadProperties  DatabaseProperties
 	Logger                  LoggerProperties
@@ -23,7 +23,7 @@ type LoggerProperties struct {
 	Level int
 }
 
-type SystemProperties struct {
+type ServerProperties struct {
 	Port string
 }
 
@@ -41,9 +41,9 @@ func LoadProperties() *Config {
 	_ = godotenv.Load()
 
 	config := &Config{
-		AppEnvName: getEnv("APP_ENV_NAME", "DEV", false),
+		AppEnvName:  getEnv("APP_ENV_NAME", "DEV", false),
 		EnablePprof: getEnvAsBool("ENABLE_PPROF", "false", false),
-		System: SystemProperties{
+		Server: ServerProperties{
 			Port: getEnv("SERVER_PORT", "8080", true),
 		},
 		DatabaseWriteProperties: DatabaseProperties{
