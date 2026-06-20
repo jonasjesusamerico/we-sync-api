@@ -12,9 +12,14 @@ import (
 
 type Config struct {
 	AppEnvName              string
-	SystemProperties        SystemProperties
+	System                  SystemProperties
 	DatabaseWriteProperties DatabaseProperties
 	DatabaseReadProperties  DatabaseProperties
+	Logger                  LoggerProperties
+}
+
+type LoggerProperties struct {
+	Level int
 }
 
 type SystemProperties struct {
@@ -36,7 +41,7 @@ func LoadProperties() *Config {
 
 	config := &Config{
 		AppEnvName: getEnv("APP_ENV_NAME", "DEV", false),
-		SystemProperties: SystemProperties{
+		System: SystemProperties{
 			Port: getEnv("SERVER_PORT", "8080", true),
 		},
 		DatabaseWriteProperties: DatabaseProperties{
@@ -52,6 +57,14 @@ func LoadProperties() *Config {
 			DATABASE_MAX_IDLE_CONNS:     getEnvAsInt("DATABASE_READ_MAX_IDLE_CONNS", "", true),
 			DATABASE_CONN_MAX_LIFETIME:  getEnvAsInt("DATABASE_READ_CONN_MAX_LIFETIME", "", true),
 			DATABASE_CONN_MAX_IDLE_TIME: getEnvAsInt("DATABASE_READ_CONN_MAX_IDLE_TIME", "", true),
+		},
+		Logger: LoggerProperties{
+			// LevelDebug Level = -4
+			// LevelInfo  Level = 0
+			// LevelWarn  Level = 4
+			// LevelError Level = 8
+			Level: getEnvAsInt("LOGGER_LEVEL", "0", false), // Default INFO
+
 		},
 	}
 

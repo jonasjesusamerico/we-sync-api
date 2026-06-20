@@ -1,6 +1,7 @@
 package router
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -14,11 +15,10 @@ type Handlers struct {
 	Health *handler.HealthHandler
 }
 
-func New(h Handlers) http.Handler {
+func New(h Handlers, baseLogger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
-	r.Use(chimiddleware.Logger)
+	r.Use(middleware.Logging(baseLogger))
 	r.Use(middleware.CORS)
-	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.Recoverer)
 
 	registerMiddlewares(r)

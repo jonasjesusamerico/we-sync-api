@@ -1,52 +1,82 @@
 package main
 
 import (
+	"context"
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/jonasjesusamerico/we-sync-api/configs"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
+	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 	"github.com/jonasjesusamerico/we-sync-api/internal/router"
 )
 
 func main() {
 	slog.Info("Iniciando a aplicação...")
 
-	// Carrega as configurações
-	var configProperties = configs.LoadProperties()
+	// Configs
+	properties := configs.LoadProperties()
 
-	// Aqui será a inicializacao do banco de dados
+	// DB
 	slog.Info("Conectando ao banco de dados...")
-	db, err := configs.NewConnection(configProperties)
-
-	db.Write.Close()
-	db.Read.Close()
-
+	db, err := configs.NewConnection(properties)
 	if err != nil {
-		slog.Error("Erro ao conectar ao banco de dados", "error", err)
+		slog.Error("Erro ao conectar ao banco", "error", err)
 		log.Fatal(err)
 	}
-	slog.Info("Conexão com o banco de dados estabelecida com sucesso!")
-	// Aqui será a inicialização do servidor HTTP
+	slog.Info("Conexão com banco estabelecida")
 
-	healthHandler := handler.NewHealthHandler()
-
+	// Server setup
 	handlers := router.Handlers{
-		Health: healthHandler,
+		Health: handler.NewHealthHandler(),
 	}
 
-	httpServer := &http.Server{
-		Addr:    ":" + configProperties.SystemProperties.Port,
-		Handler: router.New(handlers),
+	server := &http.Server{
+		Addr:    ":" + properties.System.Port,
+		Handler: router.New(handlers, logger.New(properties.Logger)),
 	}
-	httpServer.SetKeepAlivesEnabled(true)
 
-	slog.Info("Servidor HTTP iniciado na porta " + configProperties.SystemProperties.Port)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("Erro ao iniciar o servidor HTTP", "error", err)
-		log.Fatal(err)
+	// Canal para capturar sinais do SO
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	// Rodar servidor em goroutine
+	go func() {
+		slog.Info("Servidor HTTP rodando", "port", properties.System.Port)
+
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("Erro no servidor HTTP", "error", err)
+			log.Fatal(err)
+		}
+	}()
+
+	// Espera sinal de shutdown
+	<-stop
+	slog.Info("Shutdown iniciado...")
+
+	// Context com timeout para shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Desliga servidor com grace period
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("Erro ao desligar servidor", "error", err)
+	} else {
+		slog.Info("Servidor desligado com sucesso")
 	}
-	// O servidor HTTP deve ser iniciado com as configurações carregadas
 
+	// Fecha banco depois do shutdown do HTTP
+	if err := db.Write.Close(); err != nil {
+		slog.Error("Erro ao fechar DB Write", "error", err)
+	}
+	if err := db.Read.Close(); err != nil {
+		slog.Error("Erro ao fechar DB Read", "error", err)
+	}
+
+	slog.Info("Aplicação finalizada")
 }
