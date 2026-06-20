@@ -5,7 +5,6 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -39,7 +38,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + properties.System.Port,
-		Handler: router.New(handlers, logger.New(properties.Logger)),
+		Handler: router.New(handlers, logger.New(properties.Logger), properties.EnablePprof),
 	}
 
 	// Canal para capturar sinais do SO

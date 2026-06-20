@@ -12,6 +12,7 @@ import (
 
 type Config struct {
 	AppEnvName              string
+	EnablePprof             bool
 	System                  SystemProperties
 	DatabaseWriteProperties DatabaseProperties
 	DatabaseReadProperties  DatabaseProperties
@@ -41,6 +42,7 @@ func LoadProperties() *Config {
 
 	config := &Config{
 		AppEnvName: getEnv("APP_ENV_NAME", "DEV", false),
+		EnablePprof: getEnvAsBool("ENABLE_PPROF", "false", false),
 		System: SystemProperties{
 			Port: getEnv("SERVER_PORT", "8080", true),
 		},
@@ -94,4 +96,14 @@ func getEnvAsInt(key string, fallback string, required bool) int {
 		os.Exit(1)
 	}
 	return intValue
+}
+
+func getEnvAsBool(key string, fallback string, required bool) bool {
+	value := getEnv(key, fallback, required)
+	boolValue, err := strconv.ParseBool(value)
+	if err != nil {
+		slog.Error(fmt.Sprintf("Valor inválido para a propriedade %s: %s", key, value))
+		os.Exit(1)
+	}
+	return boolValue
 }

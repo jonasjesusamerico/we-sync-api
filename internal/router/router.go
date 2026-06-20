@@ -16,13 +16,15 @@ type Handlers struct {
 	Health *handler.HealthHandler
 }
 
-func New(h Handlers, baseLogger *slog.Logger) http.Handler {
+func New(h Handlers, baseLogger *slog.Logger, enablePprof bool) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logging(baseLogger))
 	r.Use(middleware.CORS)
 	r.Use(chimiddleware.Recoverer)
 
-	registerPprof(r)
+	if enablePprof {
+		registerPprof(r)
+	}
 
 	r.Route("/", func(r chi.Router) {
 		r.Get("/health-check", h.Health.Check)
