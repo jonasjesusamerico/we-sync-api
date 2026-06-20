@@ -3,6 +3,7 @@ package router
 import (
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
@@ -21,7 +22,7 @@ func New(h Handlers, baseLogger *slog.Logger) http.Handler {
 	r.Use(middleware.CORS)
 	r.Use(chimiddleware.Recoverer)
 
-	registerMiddlewares(r)
+	registerPprof(r)
 
 	r.Route("/", func(r chi.Router) {
 		r.Get("/health-check", h.Health.Check)
@@ -32,13 +33,6 @@ func New(h Handlers, baseLogger *slog.Logger) http.Handler {
 	})
 
 	return r
-}
-
-func registerMiddlewares(r *chi.Mux) {
-	// r.Use(middleware.RequestID)
-	// r.Use(middleware.Logger)
-	// r.Use(middleware.Recovery)
-	// r.Use(middleware.CORS)
 }
 
 func registerV1(r chi.Router, h Handlers) {
@@ -62,5 +56,22 @@ func registerV1(r chi.Router, h Handlers) {
 		// 		r.Delete("/{id}", h.Lancamento.Delete)
 		// 	})
 		// })
+	})
+}
+
+func registerPprof(r chi.Router) {
+	r.Route("/debug/pprof", func(r chi.Router) {
+		r.Get("/", pprof.Index)
+		r.Get("/cmdline", pprof.Cmdline)
+		r.Get("/profile", pprof.Profile)
+		r.Get("/symbol", pprof.Symbol)
+		r.Get("/trace", pprof.Trace)
+
+		r.Handle("/allocs", pprof.Handler("allocs"))
+		r.Handle("/block", pprof.Handler("block"))
+		r.Handle("/goroutine", pprof.Handler("goroutine"))
+		r.Handle("/heap", pprof.Handler("heap"))
+		r.Handle("/mutex", pprof.Handler("mutex"))
+		r.Handle("/threadcreate", pprof.Handler("threadcreate"))
 	})
 }
