@@ -29,6 +29,13 @@ func NewConnection(config *Config) (*DB, error) {
 		return nil, err
 	}
 
+	// log.Println("Criando migrator")
+	// migrator := database.NewMigrator(writeDB)
+	// log.Println("Migrator criado")
+	// if err := migrator.Up(); err != nil {
+	// 	log.Fatal("migration failed:", err)
+	// }
+
 	slog.Info("Estabelecendo conexões com os bancos de dados de leitura...")
 	readDB, err := sql.Open("pgx", config.DatabaseReadProperties.DATABASE_DSN)
 	if err != nil {

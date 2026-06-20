@@ -10,6 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+	_ "github.com/lib/pq"
+
 	"github.com/jonasjesusamerico/we-sync-api/configs"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"

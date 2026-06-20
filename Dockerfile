@@ -7,6 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+COPY ./migrations /migrations
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build \
@@ -21,6 +22,7 @@ FROM gcr.io/distroless/static-debian12
 WORKDIR /
 
 COPY --from=builder /app/app /app
+COPY --from=builder /migrations /migrations
 
 EXPOSE 8080
 
