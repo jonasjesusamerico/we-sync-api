@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,12 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/golang-migrate/migrate/v4/source/file"
-
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
 
-	"github.com/jonasjesusamerico/we-sync-api/configs"
+	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 	"github.com/jonasjesusamerico/we-sync-api/internal/router"
@@ -25,14 +21,19 @@ func main() {
 	slog.Info("Iniciando a aplicação...")
 
 	// Configs
-	properties := configs.LoadProperties()
+	properties, err := configs.LoadProperties()
+	if err != nil {
+		slog.Error("Erro ao carregar configurações", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Configurações carregadas com sucesso")
 
 	// DB
 	slog.Info("Conectando ao banco de dados...")
 	db, err := configs.NewConnection(properties)
 	if err != nil {
 		slog.Error("Erro ao conectar ao banco", "error", err)
-		log.Fatal(err)
+		os.Exit(1)
 	}
 	slog.Info("Conexão com banco estabelecida")
 
@@ -56,7 +57,7 @@ func main() {
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Erro no servidor HTTP", "error", err)
-			log.Fatal(err)
+			os.Exit(1)
 		}
 	}()
 

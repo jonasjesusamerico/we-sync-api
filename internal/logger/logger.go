@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/jonasjesusamerico/we-sync-api/configs"
+	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
 )
 
 func New(loggerProperties configs.LoggerProperties) *slog.Logger {

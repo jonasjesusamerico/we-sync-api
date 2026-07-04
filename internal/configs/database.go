@@ -14,38 +14,32 @@ type DB struct {
 }
 
 func NewConnection(config *Config) (*DB, error) {
-	slog.Info("Estabelecendo conexões com os bancos de dados de escrita...")
+	slog.Info("Estabelecendo conexão com o banco de dados de escrita...")
 	writeDB, err := sql.Open("pgx", config.DatabaseWriteProperties.DATABASE_DSN)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.Info("Configurando pools de conexões de escrita...")
+	slog.Info("Configurando pool de conexões de escrita...")
 	configurePool(writeDB, config.DatabaseWriteProperties)
 
-	slog.Info("Verificando conexões com os bancos de dados de escrita...")
+	slog.Info("Verificando conexão com o banco de dados de escrita...")
 	if err := writeDB.Ping(); err != nil {
 		_ = writeDB.Close()
 		return nil, err
 	}
 
-	// log.Println("Criando migrator")
-	// migrator := database.NewMigrator(writeDB)
-	// log.Println("Migrator criado")
-	// if err := migrator.Up(); err != nil {
-	// 	log.Fatal("migration failed:", err)
-	// }
-
-	slog.Info("Estabelecendo conexões com os bancos de dados de leitura...")
+	slog.Info("Estabelecendo conexão com o banco de dados de leitura...")
 	readDB, err := sql.Open("pgx", config.DatabaseReadProperties.DATABASE_DSN)
 	if err != nil {
+		_ = writeDB.Close()
 		return nil, err
 	}
 
-	slog.Info("Configurando pools de conexões de leitura...")
+	slog.Info("Configurando pool de conexões de leitura...")
 	configurePool(readDB, config.DatabaseReadProperties)
 
-	slog.Info("Verificando conexões com os bancos de dados de leitura...")
+	slog.Info("Verificando conexão com o banco de dados de leitura...")
 	if err := readDB.Ping(); err != nil {
 		_ = writeDB.Close()
 		_ = readDB.Close()
