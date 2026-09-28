@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
+	"github.com/jonasjesusamerico/we-sync-api/internal/httputil"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
@@ -14,18 +14,8 @@ func NewHealthHandler() *HealthHandler {
 }
 
 func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	log := logger.FromContext(r.Context())
+	log.Info("request received")
 
-	log := logger.FromContext(
-		r.Context(),
-	)
-
-	log.Info(
-		"request received",
-	)
-
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-	})
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

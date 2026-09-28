@@ -4,17 +4,20 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	AppEnvName              string
-	EnablePprof             bool
-	Server                  ServerProperties
+	AppEnvName          string
+	EnablePprof         bool
+	EnableSwagger       bool
+	CORSAllowedOrigins  []string
+	Server              ServerProperties
 	DatabaseWriteProperties DatabaseProperties
 	DatabaseReadProperties  DatabaseProperties
-	Logger                  LoggerProperties
+	Logger              LoggerProperties
 }
 
 type LoggerProperties struct {
@@ -43,6 +46,11 @@ func LoadProperties() (*Config, error) {
 	}
 
 	enablePprof, err := getEnvAsBool("ENABLE_PPROF", "false", false)
+	if err != nil {
+		return nil, err
+	}
+
+	enableSwagger, err := getEnvAsBool("ENABLE_SWAGGER", "false", false)
 	if err != nil {
 		return nil, err
 	}
@@ -99,9 +107,16 @@ func LoadProperties() (*Config, error) {
 		return nil, err
 	}
 
+	corsAllowedOrigins, err := getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173", false)
+	if err != nil {
+		return nil, err
+	}
+
 	config := &Config{
-		AppEnvName:  appEnvName,
-		EnablePprof: enablePprof,
+		AppEnvName:         appEnvName,
+		EnablePprof:        enablePprof,
+		EnableSwagger:      enableSwagger,
+		CORSAllowedOrigins: strings.Split(corsAllowedOrigins, ","),
 		Server: ServerProperties{
 			Port: serverPort,
 		},

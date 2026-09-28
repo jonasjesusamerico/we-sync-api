@@ -1,0 +1,283 @@
+basePath: /api/v1
+definitions:
+  httputil.APIError:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  purchase.CreatePurchaseRequest:
+    properties:
+      amount:
+        type: number
+      description:
+        type: string
+      payment_method:
+        type: string
+      purchase_date:
+        type: string
+      sector:
+        type: string
+      status:
+        type: string
+    type: object
+  purchase.PaginatedResult:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/purchase.Purchase'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  purchase.Purchase:
+    properties:
+      amount:
+        type: number
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      payment_method:
+        type: string
+      purchase_date:
+        type: string
+      sector:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  purchase.UpdatePurchaseRequest:
+    properties:
+      amount:
+        type: number
+      description:
+        type: string
+      payment_method:
+        type: string
+      purchase_date:
+        type: string
+      sector:
+        type: string
+      status:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    name: Jonas Jesus Americo
+    url: https://github.com/jonasjesusamerico
+  description: API de gerenciamento financeiro — lançamentos de contas mensais.
+  title: we-sync API
+  version: "1.0"
+paths:
+  /purchases:
+    get:
+      description: Returns a paginated and filtered list of purchase entries.
+      parameters:
+      - description: Month (1-12)
+        in: query
+        name: month
+        type: integer
+      - description: Year (e.g. 2024)
+        in: query
+        name: year
+        type: integer
+      - description: Status
+        enum:
+        - PENDING
+        - PAID
+        - CANCELED
+        in: query
+        name: status
+        type: string
+      - description: Sector (partial match)
+        in: query
+        name: sector
+        type: string
+      - description: Payment method
+        enum:
+        - CASH
+        - CREDIT_CARD
+        - DEBIT_CARD
+        - PIX
+        - BANK_TRANSFER
+        - BOLETO
+        in: query
+        name: payment_method
+        type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20)
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/purchase.PaginatedResult'
+        "400":
+          description: Invalid query parameter
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: List purchase entries
+      tags:
+      - purchases
+    post:
+      consumes:
+      - application/json
+      description: Creates a new monthly account entry (lançamento).
+      parameters:
+      - description: Purchase entry data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/purchase.CreatePurchaseRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/purchase.Purchase'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Create a purchase entry
+      tags:
+      - purchases
+  /purchases/{id}:
+    delete:
+      description: Removes a purchase entry by its ID.
+      parameters:
+      - description: Purchase entry ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Delete a purchase entry
+      tags:
+      - purchases
+    get:
+      description: Returns a single purchase entry identified by its ID.
+      parameters:
+      - description: Purchase entry ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/purchase.Purchase'
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Get a purchase entry by ID
+      tags:
+      - purchases
+    put:
+      consumes:
+      - application/json
+      description: Replaces all fields of an existing purchase entry.
+      parameters:
+      - description: Purchase entry ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated purchase data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/purchase.UpdatePurchaseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/purchase.Purchase'
+        "400":
+          description: Invalid request body or ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Update a purchase entry
+      tags:
+      - purchases
+schemes:
+- http
+- https
+swagger: "2.0"

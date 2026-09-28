@@ -1,3 +1,14 @@
+// @title          we-sync API
+// @version        1.0
+// @description    API de gerenciamento financeiro — lançamentos de contas mensais.
+//
+// @host           localhost:8080
+// @BasePath       /api/v1
+//
+// @contact.name   Jonas Jesus Americo
+// @contact.url    https://github.com/jonasjesusamerico
+//
+// @schemes        http https
 package main
 
 import (
@@ -9,11 +20,10 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
-
 	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
+	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 	"github.com/jonasjesusamerico/we-sync-api/internal/router"
 )
 
@@ -37,14 +47,20 @@ func main() {
 	}
 	slog.Info("Conexão com banco estabelecida")
 
+	// Purchase entries
+	purchaseRepo := purchase.NewPurchaseRepository(db)
+	purchaseSvc := purchase.NewPurchaseService(purchaseRepo)
+	purchaseHandler := purchase.NewPurchaseHandler(purchaseSvc)
+
 	// Server setup
 	handlers := router.Handlers{
-		Health: handler.NewHealthHandler(),
+		Health:   handler.NewHealthHandler(),
+		Purchase: purchaseHandler,
 	}
 
 	server := &http.Server{
 		Addr:    ":" + properties.Server.Port,
-		Handler: router.New(handlers, logger.New(properties.Logger), properties.EnablePprof),
+		Handler: router.New(handlers, logger.New(properties.Logger), properties.EnablePprof, properties.EnableSwagger, properties.CORSAllowedOrigins),
 	}
 
 	// Canal para capturar sinais do SO

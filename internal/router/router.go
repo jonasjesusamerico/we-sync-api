@@ -8,22 +8,31 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/middleware"
+	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
+	httpSwagger "github.com/swaggo/http-swagger"
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+
+	_ "github.com/jonasjesusamerico/we-sync-api/docs/swagger"
 )
 
 type Handlers struct {
-	Health *handler.HealthHandler
+	Health   *handler.HealthHandler
+	Purchase *purchase.PurchaseHandler
 }
 
-func New(h Handlers, baseLogger *slog.Logger, enablePprof bool) http.Handler {
+func New(h Handlers, baseLogger *slog.Logger, enablePprof bool, enableSwagger bool, corsAllowedOrigins []string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logging(baseLogger))
-	r.Use(middleware.CORS)
+	r.Use(middleware.CORS(corsAllowedOrigins))
 	r.Use(chimiddleware.Recoverer)
 
 	if enablePprof {
 		registerPprof(r)
+	}
+
+	if enableSwagger {
+		registerSwagger(r)
 	}
 
 	r.Route("/", func(r chi.Router) {
@@ -49,16 +58,22 @@ func registerV1(r chi.Router, h Handlers) {
 
 		// r.Group(func(r chi.Router) {
 		// 	r.Use(middleware.JWT)
-
-		// 	r.Route("/lancamentos", func(r chi.Router) {
-		// 		r.Get("/", h.Lancamento.List)
-		// 		r.Post("/", h.Lancamento.Create)
-		// 		r.Get("/{id}", h.Lancamento.GetByID)
-		// 		r.Put("/{id}", h.Lancamento.Update)
-		// 		r.Delete("/{id}", h.Lancamento.Delete)
-		// 	})
 		// })
+
+		r.Route("/purchases", func(r chi.Router) {
+			r.Get("/", h.Purchase.List)
+			r.Post("/", h.Purchase.Create)
+			r.Get("/{id}", h.Purchase.GetByID)
+			r.Put("/{id}", h.Purchase.Update)
+			r.Delete("/{id}", h.Purchase.Delete)
+		})
 	})
+}
+
+func registerSwagger(r chi.Router) {
+	r.Get("/swagger/*", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 }
 
 func registerPprof(r chi.Router) {
