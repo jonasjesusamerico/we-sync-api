@@ -10,14 +10,28 @@ import (
 )
 
 type Config struct {
-	AppEnvName          string
-	EnablePprof         bool
-	EnableSwagger       bool
-	CORSAllowedOrigins  []string
-	Server              ServerProperties
+	AppEnvName              string
+	EnablePprof             bool
+	EnableSwagger           bool
+	CORSAllowedOrigins      []string
+	Server                  ServerProperties
 	DatabaseWriteProperties DatabaseProperties
 	DatabaseReadProperties  DatabaseProperties
-	Logger              LoggerProperties
+	Logger                  LoggerProperties
+	Telemetry               TelemetryProperties
+}
+
+// TelemetryProperties holds OpenTelemetry configuration.
+type TelemetryProperties struct {
+	// ServiceName is the logical name reported to the OTel backend.
+	ServiceName string
+	// ServiceVersion is the deployed version string (e.g. "1.0.0").
+	ServiceVersion string
+	// OTLPEndpoint is the gRPC address of the OTel Collector (host:port).
+	// Leave empty to disable OTLP export (Prometheus scrape still works).
+	OTLPEndpoint string
+	// PrometheusPort is the port where /metrics is exposed. Default: "9090".
+	PrometheusPort string
 }
 
 type LoggerProperties struct {
@@ -112,6 +126,24 @@ func LoadProperties() (*Config, error) {
 		return nil, err
 	}
 
+	// --- Telemetry (OTel) ---
+	otelServiceName, err := getEnv("OTEL_SERVICE_NAME", "we-sync-api", false)
+	if err != nil {
+		return nil, err
+	}
+	otelServiceVersion, err := getEnv("OTEL_SERVICE_VERSION", "1.0.0", false)
+	if err != nil {
+		return nil, err
+	}
+	otelEndpoint, err := getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "", false)
+	if err != nil {
+		return nil, err
+	}
+	otelPrometheusPort, err := getEnv("OTEL_PROMETHEUS_PORT", "9090", false)
+	if err != nil {
+		return nil, err
+	}
+
 	config := &Config{
 		AppEnvName:         appEnvName,
 		EnablePprof:        enablePprof,
@@ -140,6 +172,12 @@ func LoadProperties() (*Config, error) {
 			// LevelWarn  Level = 4
 			// LevelError Level = 8
 			Level: loggerLevel, // Default INFO
+		},
+		Telemetry: TelemetryProperties{
+			ServiceName:    otelServiceName,
+			ServiceVersion: otelServiceVersion,
+			OTLPEndpoint:   otelEndpoint,
+			PrometheusPort: otelPrometheusPort,
 		},
 	}
 

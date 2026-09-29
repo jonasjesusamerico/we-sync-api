@@ -6,23 +6,41 @@ import (
 	"net/http/pprof"
 
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/middleware"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 	httpSwagger "github.com/swaggo/http-swagger"
 
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
-
 	_ "github.com/jonasjesusamerico/we-sync-api/docs/swagger"
 )
 
+// Handlers groups all domain handlers injected into the router.
 type Handlers struct {
 	Health   *handler.HealthHandler
 	Purchase *purchase.PurchaseHandler
 }
 
-func New(h Handlers, baseLogger *slog.Logger, enablePprof bool, enableSwagger bool, corsAllowedOrigins []string) http.Handler {
+// New builds and returns the root HTTP handler.
+// serviceName is forwarded to otelhttp to tag all spans with the correct service name.
+func New(
+	h Handlers,
+	baseLogger *slog.Logger,
+	serviceName string,
+	enablePprof bool,
+	enableSwagger bool,
+	corsAllowedOrigins []string,
+) http.Handler {
 	r := chi.NewRouter()
+
+	// otelhttp must be the outermost middleware so it wraps the full
+	// request lifecycle, including all inner middlewares and handlers.
+	// It automatically creates a server span, propagates W3C TraceContext
+	// from incoming headers, and records http.server.* metrics.
+	r.Use(otelhttp.NewMiddleware(serviceName))
+
 	r.Use(middleware.Logging(baseLogger))
 	r.Use(middleware.CORS(corsAllowedOrigins))
 	r.Use(chimiddleware.Recoverer)
@@ -48,8 +66,6 @@ func New(h Handlers, baseLogger *slog.Logger, enablePprof bool, enableSwagger bo
 
 func registerV1(r chi.Router, h Handlers) {
 	r.Route("/v1", func(r chi.Router) {
-
-		// r.Get("/health", h.Health.Check)
 
 		// r.Route("/auth", func(r chi.Router) {
 		// 	r.Post("/login", h.Auth.Login)

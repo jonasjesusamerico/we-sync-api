@@ -7,30 +7,31 @@ import (
 	"time"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"github.com/shopspring/decimal"
 )
 
 // helpers
 
 func validCreateRequest() *CreatePurchaseRequest {
-	return &CreatePurchaseRequest{
-		PurchaseDate:  time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC),
+	return &CreatePurchaseRequest{PurchaseRequest{
+		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
 		Description:   "Energy bill",
 		Sector:        "Utilities",
 		PaymentMethod: PaymentMethodPix,
-		Amount:        174.65,
+		Amount:        decimal.NewFromFloat(174.65),
 		Status:        StatusPending,
-	}
+	}}
 }
 
 func validUpdateRequest() *UpdatePurchaseRequest {
-	return &UpdatePurchaseRequest{
-		PurchaseDate:  time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC),
+	return &UpdatePurchaseRequest{PurchaseRequest{
+		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
 		Description:   "Energy bill updated",
 		Sector:        "Utilities",
 		PaymentMethod: PaymentMethodPix,
-		Amount:        200.00,
+		Amount:        decimal.NewFromFloat(200.00),
 		Status:        StatusPaid,
-	}
+	}}
 }
 
 func purchaseFromCreate(req *CreatePurchaseRequest) *Purchase {
@@ -70,7 +71,7 @@ func TestService_Create_Success(t *testing.T) {
 
 func TestService_Create_MissingPurchaseDate(t *testing.T) {
 	req := validCreateRequest()
-	req.PurchaseDate = time.Time{}
+	req.PurchaseDate = Date{}
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
@@ -118,7 +119,7 @@ func TestService_Create_InvalidPaymentMethod(t *testing.T) {
 
 func TestService_Create_AmountZero(t *testing.T) {
 	req := validCreateRequest()
-	req.Amount = 0
+	req.Amount = decimal.Zero
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
@@ -130,7 +131,7 @@ func TestService_Create_AmountZero(t *testing.T) {
 
 func TestService_Create_AmountNegative(t *testing.T) {
 	req := validCreateRequest()
-	req.Amount = -10
+	req.Amount = decimal.NewFromFloat(-10)
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
@@ -262,6 +263,15 @@ func TestService_List_CustomPagination(t *testing.T) {
 	}
 }
 
+func TestService_List_PageSizeExceedsMax(t *testing.T) {
+	svc := NewPurchaseService(&mockPurchaseRepository{})
+
+	_, err := svc.List(context.Background(), ListFilter{PageSize: MaxPageSize + 1})
+	if !errors.Is(err, apperrors.ErrValidation) {
+		t.Errorf("expected ErrValidation for page_size > MaxPageSize, got %v", err)
+	}
+}
+
 // --- Update ---
 
 func TestService_Update_Success(t *testing.T) {
@@ -298,7 +308,7 @@ func TestService_Update_NotFound(t *testing.T) {
 
 func TestService_Update_ValidationError(t *testing.T) {
 	req := validUpdateRequest()
-	req.Amount = -5
+	req.Amount = decimal.NewFromFloat(-5)
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
@@ -353,36 +363,36 @@ func TestService_Delete_RepositoryError(t *testing.T) {
 // --- Domain helpers ---
 
 func TestIsValidStatus(t *testing.T) {
-	valid := []string{StatusPending, StatusPaid, StatusCanceled}
+	valid := []Status{StatusPending, StatusPaid, StatusCanceled}
 	for _, s := range valid {
-		if !IsValidStatus(s) {
+		if !s.IsValid() {
 			t.Errorf("expected %q to be valid", s)
 		}
 	}
 
-	invalid := []string{"", "UNKNOWN", "pending", "paid"}
+	invalid := []Status{"", "UNKNOWN", "pending", "paid"}
 	for _, s := range invalid {
-		if IsValidStatus(s) {
+		if s.IsValid() {
 			t.Errorf("expected %q to be invalid", s)
 		}
 	}
 }
 
 func TestIsValidPaymentMethod(t *testing.T) {
-	valid := []string{
+	valid := []PaymentMethod{
 		PaymentMethodCash, PaymentMethodCreditCard, PaymentMethodDebitCard,
 		PaymentMethodPix, PaymentMethodBankTransfer, PaymentMethodBoleto,
 	}
-	for _, s := range valid {
-		if !IsValidPaymentMethod(s) {
-			t.Errorf("expected %q to be valid", s)
+	for _, p := range valid {
+		if !p.IsValid() {
+			t.Errorf("expected %q to be valid", p)
 		}
 	}
 
-	invalid := []string{"", "BITCOIN", "cash", "pix"}
-	for _, s := range invalid {
-		if IsValidPaymentMethod(s) {
-			t.Errorf("expected %q to be invalid", s)
+	invalid := []PaymentMethod{"", "BITCOIN", "cash", "pix"}
+	for _, p := range invalid {
+		if p.IsValid() {
+			t.Errorf("expected %q to be invalid", p)
 		}
 	}
 }

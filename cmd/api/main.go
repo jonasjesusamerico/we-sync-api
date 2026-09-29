@@ -25,6 +25,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 	"github.com/jonasjesusamerico/we-sync-api/internal/router"
+	"github.com/jonasjesusamerico/we-sync-api/internal/telemetry"
 )
 
 func main() {
@@ -37,6 +38,26 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("Configurações carregadas com sucesso")
+
+	// Telemetry — must be initialised before any instrumented code runs.
+	// The background context is intentional: OTel bootstrap uses it only
+	// to connect exporters; request-scoped contexts are passed per operation.
+	telShutdown, err := telemetry.Bootstrap(context.Background(), telemetry.Config{
+		ServiceName:    properties.Telemetry.ServiceName,
+		ServiceVersion: properties.Telemetry.ServiceVersion,
+		Environment:    properties.AppEnvName,
+		OTLPEndpoint:   properties.Telemetry.OTLPEndpoint,
+		PrometheusPort: properties.Telemetry.PrometheusPort,
+	})
+	if err != nil {
+		slog.Error("Erro ao inicializar telemetria", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Telemetria inicializada",
+		"service", properties.Telemetry.ServiceName,
+		"otlp_endpoint", properties.Telemetry.OTLPEndpoint,
+		"prometheus_port", properties.Telemetry.PrometheusPort,
+	)
 
 	// DB
 	slog.Info("Conectando ao banco de dados...")
@@ -59,8 +80,15 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr:    ":" + properties.Server.Port,
-		Handler: router.New(handlers, logger.New(properties.Logger), properties.EnablePprof, properties.EnableSwagger, properties.CORSAllowedOrigins),
+		Addr: ":" + properties.Server.Port,
+		Handler: router.New(
+			handlers,
+			logger.New(properties.Logger),
+			properties.Telemetry.ServiceName,
+			properties.EnablePprof,
+			properties.EnableSwagger,
+			properties.CORSAllowedOrigins,
+		),
 	}
 
 	// Canal para capturar sinais do SO
@@ -81,18 +109,25 @@ func main() {
 	<-stop
 	slog.Info("Shutdown iniciado...")
 
-	// Context com timeout para shutdown
+	// Context com timeout para shutdown — dá tempo às requests em voo terminarem.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Desliga servidor com grace period
+	// 1. Para de aceitar novas conexões e aguarda as em voo.
 	if err := server.Shutdown(ctx); err != nil {
 		slog.Error("Erro ao desligar servidor", "error", err)
 	} else {
 		slog.Info("Servidor desligado com sucesso")
 	}
 
-	// Fecha banco depois do shutdown do HTTP
+	// 2. Flush de traces e métricas pendentes.
+	if err := telShutdown(ctx); err != nil {
+		slog.Error("Erro ao fechar telemetria", "error", err)
+	} else {
+		slog.Info("Telemetria encerrada com sucesso")
+	}
+
+	// 3. Fecha conexões com o banco após garantir que nenhuma query está em voo.
 	if err := db.Write.Close(); err != nil {
 		slog.Error("Erro ao fechar DB Write", "error", err)
 	}

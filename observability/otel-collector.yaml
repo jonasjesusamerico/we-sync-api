@@ -1,0 +1,63 @@
+# OpenTelemetry Collector configuration for we-sync-api local development stack.
+#
+# Data flow:
+#   App (OTLP gRPC :4317)
+#     → receiver/otlp
+#       → processor/batch
+#         → exporter/otlp/jaeger   (traces → Jaeger)
+#         → exporter/prometheus    (metrics scraped by Prometheus on :8889)
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Batch processor reduces the number of outbound requests by grouping
+  # telemetry data before sending it to exporters.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+  # Memory limiter prevents OOM by dropping data when memory pressure is high.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+    spike_limit_mib: 50
+
+exporters:
+  # Forward traces to Jaeger via OTLP gRPC.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Expose metrics on :8889/metrics for Prometheus to scrape.
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: we_sync
+
+  # Debug exporter prints telemetry to the collector's stdout (dev only).
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+service:
+  extensions: [health_check, pprof]
+  pipelines:
+    traces:
+      receivers:  [otlp]
+      processors: [memory_limiter, batch]
+      exporters:  [otlp/jaeger, debug]
+    metrics:
+      receivers:  [otlp]
+      processors: [memory_limiter, batch]
+      exporters:  [prometheus, debug]

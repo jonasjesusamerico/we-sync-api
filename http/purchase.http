@@ -1,111 +1,249 @@
 # Purchase Entries API
 # Extensão: REST Client (humao.rest-client)
 # https://marketplace.visualstudio.com/items?itemName=humao.rest-client
+#
+# Contrato:
+#   purchase_date → string "YYYY-MM-DD"   (tipo Date, sem horário)
+#   amount        → string decimal        (ex: "174.65", não número float)
+#   status        → PENDING | PAID | CANCELED
+#   payment_method→ CASH | CREDIT_CARD | DEBIT_CARD | PIX | BANK_TRANSFER | BOLETO
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
 
-### ─────────────────────────────────────────
-### CREATE — Criar lançamento (status: 201)
-### ─────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# CREATE  POST /purchases  → 201
+# ─────────────────────────────────────────────────────────────────────────────
+
+### CREATE — Conta de energia (PIX, PENDING)
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
 
 {
-  "purchase_date": "2024-07-01T00:00:00Z",
-  "description": "Conta de energia",
-  "sector": "Utilities",
+  "purchase_date":  "2024-07-01",
+  "description":    "Conta de energia",
+  "sector":         "Utilities",
   "payment_method": "PIX",
-  "amount": 174.65,
-  "status": "PENDING"
+  "amount":         "174.65",
+  "status":         "PENDING"
 }
 
-### CREATE — Internet (PAID)
+### CREATE — Internet (BOLETO, PAID)
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
 
 {
-  "purchase_date": "2024-07-01T00:00:00Z",
-  "description": "Internet",
-  "sector": "Internet",
+  "purchase_date":  "2024-07-01",
+  "description":    "Internet",
+  "sector":         "Internet",
   "payment_method": "BOLETO",
-  "amount": 99.99,
-  "status": "PAID"
+  "amount":         "99.99",
+  "status":         "PAID"
 }
 
-### CREATE — Validação: amount zero (espera 422)
+### CREATE — Aluguel (BANK_TRANSFER, PENDING)
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
 
 {
-  "purchase_date": "2024-07-01T00:00:00Z",
-  "description": "Teste inválido",
-  "sector": "TI",
-  "payment_method": "PIX",
-  "amount": 0,
-  "status": "PENDING"
+  "purchase_date":  "2024-07-05",
+  "description":    "Aluguel julho",
+  "sector":         "Moradia",
+  "payment_method": "BANK_TRANSFER",
+  "amount":         "1500.00",
+  "status":         "PENDING"
 }
 
-### CREATE — Validação: status inválido (espera 422)
+### CREATE — Validação: amount zero → 422
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
 
 {
-  "purchase_date": "2024-07-01T00:00:00Z",
-  "description": "Teste inválido",
-  "sector": "TI",
+  "purchase_date":  "2024-07-01",
+  "description":    "Teste inválido",
+  "sector":         "TI",
   "payment_method": "PIX",
-  "amount": 50.00,
-  "status": "INVALIDO"
+  "amount":         "0",
+  "status":         "PENDING"
 }
 
-### ─────────────────────────────────────────
-### LIST — Listar todos (sem filtro)
-### ─────────────────────────────────────────
+### CREATE — Validação: status inválido → 422
+
+POST {{baseUrl}}/purchases
+Content-Type: {{contentType}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Teste inválido",
+  "sector":         "TI",
+  "payment_method": "PIX",
+  "amount":         "50.00",
+  "status":         "INVALIDO"
+}
+
+### CREATE — Validação: payment_method inválido → 422
+
+POST {{baseUrl}}/purchases
+Content-Type: {{contentType}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Teste inválido",
+  "sector":         "TI",
+  "payment_method": "BITCOIN",
+  "amount":         "50.00",
+  "status":         "PENDING"
+}
+
+### CREATE — Validação: purchase_date com formato errado → 400
+
+POST {{baseUrl}}/purchases
+Content-Type: {{contentType}}
+
+{
+  "purchase_date":  "2024-07-01T00:00:00Z",
+  "description":    "Data no formato errado",
+  "sector":         "TI",
+  "payment_method": "PIX",
+  "amount":         "50.00",
+  "status":         "PENDING"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET BY ID  GET /purchases/{id}  → 200 | 404
+# ─────────────────────────────────────────────────────────────────────────────
+
+### GET BY ID — Buscar por ID existente
+
+GET {{baseUrl}}/purchases/1
+Content-Type: {{contentType}}
+
+### GET BY ID — ID inexistente → 404
+
+GET {{baseUrl}}/purchases/999999
+Content-Type: {{contentType}}
+
+### GET BY ID — ID inválido (não numérico) → 400
+
+GET {{baseUrl}}/purchases/abc
+Content-Type: {{contentType}}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIST  GET /purchases  → 200
+# Paginação: page (default 1), page_size (default 20, max 100)
+# ─────────────────────────────────────────────────────────────────────────────
+
+### LIST — Sem filtros (página 1, 20 itens)
 
 GET {{baseUrl}}/purchases
-Content-Type: {{contentType}}
 
 ### LIST — Filtrar por mês e ano
 
 GET {{baseUrl}}/purchases?month=7&year=2024
-Content-Type: {{contentType}}
 
 ### LIST — Filtrar por status PENDING
 
 GET {{baseUrl}}/purchases?status=PENDING
-Content-Type: {{contentType}}
 
 ### LIST — Filtrar por status PAID
 
 GET {{baseUrl}}/purchases?status=PAID
-Content-Type: {{contentType}}
 
-### LIST — Filtrar por setor
+### LIST — Filtrar por status CANCELED
 
-GET {{baseUrl}}/purchases?sector=Utilities
-Content-Type: {{contentType}}
+GET {{baseUrl}}/purchases?status=CANCELED
+
+### LIST — Filtrar por setor (busca parcial, case-insensitive)
+
+GET {{baseUrl}}/purchases?sector=util
 
 ### LIST — Filtrar por forma de pagamento
 
 GET {{baseUrl}}/purchases?payment_method=PIX
-Content-Type: {{contentType}}
 
 ### LIST — Filtro combinado: mês + ano + status
 
 GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING
-Content-Type: {{contentType}}
 
 ### LIST — Filtro completo com paginação
 
 GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&sector=Utilities&payment_method=PIX&page=1&page_size=10
-Content-Type: {{contentType}}
 
-### LIST — Página 2
+### LIST — Página 2 com 5 itens por página
 
 GET {{baseUrl}}/purchases?page=2&page_size=5
+
+### LIST — Validação: mês inválido → 400
+
+GET {{baseUrl}}/purchases?month=13
+
+### LIST — Validação: page_size acima do limite (>100) → 422
+
+GET {{baseUrl}}/purchases?page_size=200
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UPDATE  PUT /purchases/{id}  → 200 | 404 | 422
+# Substitui todos os campos (full replace, não patch).
+# ─────────────────────────────────────────────────────────────────────────────
+
+### UPDATE — Atualizar lançamento existente
+
+PUT {{baseUrl}}/purchases/1
 Content-Type: {{contentType}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Conta de energia — atualizado",
+  "sector":         "Utilities",
+  "payment_method": "CREDIT_CARD",
+  "amount":         "180.00",
+  "status":         "PAID"
+}
+
+### UPDATE — ID inexistente → 404
+
+PUT {{baseUrl}}/purchases/999999
+Content-Type: {{contentType}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Inexistente",
+  "sector":         "TI",
+  "payment_method": "PIX",
+  "amount":         "50.00",
+  "status":         "PENDING"
+}
+
+### UPDATE — Validação: amount negativo → 422
+
+PUT {{baseUrl}}/purchases/1
+Content-Type: {{contentType}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Valor inválido",
+  "sector":         "TI",
+  "payment_method": "PIX",
+  "amount":         "-10.00",
+  "status":         "PENDING"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELETE  DELETE /purchases/{id}  → 204 | 404
+# ─────────────────────────────────────────────────────────────────────────────
+
+### DELETE — Remover lançamento existente → 204
+
+DELETE {{baseUrl}}/purchases/1
+
+### DELETE — ID inexistente → 404
+
+DELETE {{baseUrl}}/purchases/999999
+
+### DELETE — ID inválido → 400
+
+DELETE {{baseUrl}}/purchases/0

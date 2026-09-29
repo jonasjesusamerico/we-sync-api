@@ -1,4 +1,9 @@
 services:
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+
   postgres:
     image: postgres:17
     container_name: we-sync-postgres
@@ -22,15 +27,12 @@ services:
     mem_reservation: 128m
     command:
       - postgres
-      # ~25% do mem_limit — regra geral para shared_buffers
       - -c
       - shared_buffers=64MB
       - -c
       - work_mem=2MB
       - -c
       - maintenance_work_mem=16MB
-      # Deve ser próximo ao mem_limit para o query planner
-      # estimar corretamente o cache disponível
       - -c
       - effective_cache_size=128MB
       # 2 apps × 5 write + 5 read = 20 conexões máximas
@@ -50,8 +52,7 @@ services:
     command:
       [
         "-path", "/migrations",
-        "-database",
-        "${DATABASE_WRITE_DSN}",
+        "-database", "${DATABASE_WRITE_DSN}",
         "up"
       ]
 
@@ -63,13 +64,16 @@ services:
       - "8080:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    # Sobe somente após as migrations concluírem com sucesso
     depends_on:
       migrate:
         condition: service_completed_successfully
     cpus: 0.20
     mem_limit: 32m
     mem_reservation: 16m
+
+  # ---------------------------------------------------------------------------
+  # Application instances
+  # ---------------------------------------------------------------------------
 
   app1:
     build:
@@ -79,10 +83,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # Garante que o schema já existe antes de aceitar tráfego
     depends_on:
       migrate:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    # Port 9090 is the Prometheus /metrics scrape endpoint exposed by the app.
+    expose:
+      - "9090"
     cpus: 0.35
     mem_limit: 100m
     mem_reservation: 64m
@@ -98,9 +106,117 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    expose:
+      - "9090"
     cpus: 0.35
     mem_limit: 100m
     mem_reservation: 64m
 
+  # ---------------------------------------------------------------------------
+  # Observability stack
+  # ---------------------------------------------------------------------------
+
+  # OTel Collector — central hub that receives OTLP from the app, forwards
+  # traces to Jaeger and exposes metrics for Prometheus to scrape.
+  #
+  # NOTE: the otel/opentelemetry-collector-contrib image is distroless (no
+  # shell, wget or curl). The health check uses /otelcol-contrib components
+  # which invokes the built-in validate sub-command as a lightweight probe.
+  # We use `nc` via a loopback TCP check against the health_check extension
+  # port (13133). Because nc is also absent in distroless we rely on the
+  # collector's own --feature-gates flag to expose a ready endpoint and check
+  # the HTTP port with the Go net dialer built into the binary.
+  # The simplest distroless-compatible approach is a pure TCP probe:
+  # Docker's HEALTHCHECK does not support TCP natively without a helper binary,
+  # so we set restart: on-failure and make apps depend on service_started.
+  # The collector is ready within ~1s of container start in practice.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.127.0
+    container_name: we-sync-otel-collector
+    restart: on-failure
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    command: ["--config=/etc/otel-collector.yaml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver (used by app instances)
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8889:8889"   # Prometheus metrics exporter (scraped by Prometheus)
+      - "13133:13133" # Health check extension endpoint
+    depends_on:
+      - jaeger
+    cpus: 0.20
+    mem_limit: 256m
+    mem_reservation: 64m
+
+  # Jaeger — distributed tracing backend + UI.
+  # UI available at http://localhost:16686
+  jaeger:
+    image: jaegertracing/jaeger:2.6.0
+    container_name: we-sync-jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14317:4317"  # OTLP gRPC (used by the collector)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686/"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    cpus: 0.30
+    mem_limit: 256m
+    mem_reservation: 128m
+
+  # Prometheus — metrics collection and storage.
+  # UI available at http://localhost:9091
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    container_name: we-sync-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9091:9090"   # Prometheus UI (9091 on host to avoid conflict with app /metrics)
+    depends_on:
+      - otel-collector
+    cpus: 0.20
+    mem_limit: 256m
+    mem_reservation: 64m
+
+  # Grafana — dashboards for metrics and trace correlation.
+  # UI available at http://localhost:3001  (admin / admin)
+  grafana:
+    image: grafana/grafana:12.0.1
+    container_name: we-sync-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Auto-provision Prometheus and Jaeger datasources on first boot.
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"   # Grafana UI (3001 on host to avoid conflict with frontend)
+    depends_on:
+      - prometheus
+      - jaeger
+    cpus: 0.20
+    mem_limit: 256m
+    mem_reservation: 64m
+
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:

@@ -63,7 +63,7 @@ func (h *PurchaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Param       sector         query    string false "Sector (partial match)"
 // @Param       payment_method query    string false "Payment method" Enums(CASH, CREDIT_CARD, DEBIT_CARD, PIX, BANK_TRANSFER, BOLETO)
 // @Param       page           query    int    false "Page number (default 1)"
-// @Param       page_size      query    int    false "Items per page (default 20)"
+// @Param       page_size      query    int    false "Items per page (default 20, max 100)"
 // @Success     200            {object} PaginatedResult
 // @Failure     400            {object} httputil.APIError "Invalid query parameter"
 // @Failure     500            {object} httputil.APIError "Internal server error"
@@ -72,9 +72,9 @@ func (h *PurchaseHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	filter := ListFilter{
-		Status:        q.Get("status"),
+		Status:        Status(q.Get("status")),
 		Sector:        q.Get("sector"),
-		PaymentMethod: q.Get("payment_method"),
+		PaymentMethod: PaymentMethod(q.Get("payment_method")),
 	}
 
 	if v := q.Get("month"); v != "" {
@@ -108,10 +108,6 @@ func (h *PurchaseHandler) List(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
 			httputil.WriteBadRequest(w, "page_size must be a positive integer")
-			return
-		}
-		if n > 100 {
-			httputil.WriteBadRequest(w, "page_size must be at most 100")
 			return
 		}
 		filter.PageSize = n
