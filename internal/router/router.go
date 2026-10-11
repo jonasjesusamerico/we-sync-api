@@ -9,6 +9,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/middleware"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
@@ -20,6 +21,7 @@ import (
 // Handlers groups all domain handlers injected into the router.
 type Handlers struct {
 	Health   *handler.HealthHandler
+	Auth     *auth.AuthHandler
 	Purchase *purchase.PurchaseHandler
 }
 
@@ -32,6 +34,7 @@ func New(
 	enablePprof bool,
 	enableSwagger bool,
 	corsAllowedOrigins []string,
+	jwtSecret []byte,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -58,30 +61,29 @@ func New(
 	})
 
 	r.Route("/api", func(r chi.Router) {
-		registerV1(r, h)
+		registerV1(r, h, jwtSecret)
 	})
 
 	return r
 }
 
-func registerV1(r chi.Router, h Handlers) {
+func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
 	r.Route("/v1", func(r chi.Router) {
+		r.Route("/auth", func(r chi.Router) {
+			r.Post("/register", h.Auth.Register)
+			r.Post("/login", h.Auth.Login)
+			r.Post("/refresh", h.Auth.Refresh)
+		})
 
-		// r.Route("/auth", func(r chi.Router) {
-		// 	r.Post("/login", h.Auth.Login)
-		// 	r.Post("/register", h.Auth.Register)
-		// })
-
-		// r.Group(func(r chi.Router) {
-		// 	r.Use(middleware.JWT)
-		// })
-
-		r.Route("/purchases", func(r chi.Router) {
-			r.Get("/", h.Purchase.List)
-			r.Post("/", h.Purchase.Create)
-			r.Get("/{id}", h.Purchase.GetByID)
-			r.Put("/{id}", h.Purchase.Update)
-			r.Delete("/{id}", h.Purchase.Delete)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.JWT(jwtSecret))
+			r.Route("/purchases", func(r chi.Router) {
+				r.Get("/", h.Purchase.List)
+				r.Post("/", h.Purchase.Create)
+				r.Get("/{id}", h.Purchase.GetByID)
+				r.Put("/{id}", h.Purchase.Update)
+				r.Delete("/{id}", h.Purchase.Delete)
+			})
 		})
 	})
 }

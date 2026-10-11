@@ -43,13 +43,13 @@ func NewPurchaseRepository(db *configs.DB) PurchaseRepository {
 }
 
 // Create inserts a new purchase entry using the write DB and returns the created record.
-func (r *purchasePostgresRepository) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error) {
+func (r *purchasePostgresRepository) Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error) {
 	const query = `
 		INSERT INTO purchase_entries
-			(purchase_date, description, sector, payment_method, amount, status, created_at, updated_at)
+			(user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at)
 		VALUES
-			($1, $2, $3, $4, $5, $6, NOW(), NOW())
-		RETURNING id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at`
+			($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		RETURNING id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.insert")
 	defer span.End()
@@ -61,6 +61,7 @@ func (r *purchasePostgresRepository) Create(ctx context.Context, req *CreatePurc
 	var p Purchase
 	var amountStr string
 	err := r.db.Write.QueryRowContext(ctx, query,
+		userID,
 		req.PurchaseDate.Time,
 		req.Description,
 		req.Sector,
@@ -69,6 +70,7 @@ func (r *purchasePostgresRepository) Create(ctx context.Context, req *CreatePurc
 		req.Status,
 	).Scan(
 		&p.ID,
+		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
 		&p.Sector,
@@ -97,11 +99,11 @@ func (r *purchasePostgresRepository) Create(ctx context.Context, req *CreatePurc
 
 // GetByID fetches a single purchase entry by ID using the read DB.
 // Returns (nil, nil) when the record is not found.
-func (r *purchasePostgresRepository) GetByID(ctx context.Context, id int64) (*Purchase, error) {
+func (r *purchasePostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Purchase, error) {
 	const query = `
-		SELECT id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at
+		SELECT id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at
 		FROM   purchase_entries
-		WHERE  id = $1`
+		WHERE  id = $1 AND user_id = $2`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.select_by_id")
 	defer span.End()
@@ -114,8 +116,9 @@ func (r *purchasePostgresRepository) GetByID(ctx context.Context, id int64) (*Pu
 
 	var p Purchase
 	var amountStr string
-	err := r.db.Read.QueryRowContext(ctx, query, id).Scan(
+	err := r.db.Read.QueryRowContext(ctx, query, id, userID).Scan(
 		&p.ID,
+		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
 		&p.Sector,
@@ -156,8 +159,9 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 	)...)
 
 	args := []any{}
-	conditions := []string{}
-	argIdx := 1
+	conditions := []string{"user_id = $1"}
+	args = append(args, filter.UserID)
+	argIdx := 2
 
 	if filter.Month > 0 {
 		conditions = append(conditions, fmt.Sprintf("EXTRACT(MONTH FROM purchase_date) = $%d", argIdx))
@@ -205,7 +209,7 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 	offset := (filter.Page - 1) * filter.PageSize
 
 	dataQuery := fmt.Sprintf(`
-		SELECT id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at
+		SELECT id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at
 		FROM   purchase_entries
 		%s
 		ORDER  BY purchase_date DESC, id DESC
@@ -227,6 +231,7 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 		var amountStr string
 		if err := rows.Scan(
 			&p.ID,
+			&p.UserID,
 			&p.PurchaseDate.Time,
 			&p.Description,
 			&p.Sector,
@@ -275,7 +280,7 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 
 // Update modifies an existing purchase entry using the write DB and returns the updated record.
 // Returns (nil, nil) when no row with the given ID exists.
-func (r *purchasePostgresRepository) Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
+func (r *purchasePostgresRepository) Update(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
 	const query = `
 		UPDATE purchase_entries
 		SET
@@ -286,8 +291,8 @@ func (r *purchasePostgresRepository) Update(ctx context.Context, id int64, req *
 			amount         = $5,
 			status         = $6,
 			updated_at     = NOW()
-		WHERE id = $7
-		RETURNING id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at`
+		WHERE id = $7 AND user_id = $8
+		RETURNING id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.update")
 	defer span.End()
@@ -308,8 +313,10 @@ func (r *purchasePostgresRepository) Update(ctx context.Context, id int64, req *
 		req.Amount.String(),
 		req.Status,
 		id,
+		userID,
 	).Scan(
 		&p.ID,
+		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
 		&p.Sector,
@@ -342,8 +349,8 @@ func (r *purchasePostgresRepository) Update(ctx context.Context, id int64, req *
 
 // Delete removes a purchase entry by ID using the write DB.
 // Returns (false, nil) when no row with the given ID exists.
-func (r *purchasePostgresRepository) Delete(ctx context.Context, id int64) (bool, error) {
-	const query = `DELETE FROM purchase_entries WHERE id = $1`
+func (r *purchasePostgresRepository) Delete(ctx context.Context, userID, id int64) (bool, error) {
+	const query = `DELETE FROM purchase_entries WHERE id = $1 AND user_id = $2`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.delete")
 	defer span.End()
@@ -354,7 +361,7 @@ func (r *purchasePostgresRepository) Delete(ctx context.Context, id int64) (bool
 	ctx, cancel := context.WithTimeout(ctx, dbTimeout)
 	defer cancel()
 
-	result, err := r.db.Write.ExecContext(ctx, query, id)
+	result, err := r.db.Write.ExecContext(ctx, query, id, userID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

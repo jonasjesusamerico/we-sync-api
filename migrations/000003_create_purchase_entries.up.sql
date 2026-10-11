@@ -8,14 +8,12 @@ CREATE TABLE purchase_entries (
     status         VARCHAR(20)    NOT NULL,
     created_at     TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT chk_status
-        CHECK (status IN ('PENDING', 'PAID', 'CANCELED')),
-
-    CONSTRAINT chk_payment_method
-        CHECK (payment_method IN ('CASH', 'CREDIT_CARD', 'DEBIT_CARD', 'PIX', 'BANK_TRANSFER', 'BOLETO'))
+    CONSTRAINT chk_status CHECK (status IN ('PENDING', 'PAID', 'CANCELED')),
+    CONSTRAINT chk_payment_method CHECK (
+        payment_method IN ('CASH', 'CREDIT_CARD', 'DEBIT_CARD', 'PIX', 'BANK_TRANSFER', 'BOLETO')
+    )
 );
 
 CREATE INDEX idx_purchase_entries_purchase_date ON purchase_entries (purchase_date);
-CREATE INDEX idx_purchase_entries_status        ON purchase_entries (status);
-CREATE INDEX idx_purchase_entries_sector        ON purchase_entries (sector);
+CREATE INDEX idx_purchase_entries_status ON purchase_entries (status);
+CREATE INDEX idx_purchase_entries_sector ON purchase_entries (sector);

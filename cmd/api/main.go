@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
@@ -72,10 +73,19 @@ func main() {
 	purchaseRepo := purchase.NewPurchaseRepository(db)
 	purchaseSvc := purchase.NewPurchaseService(purchaseRepo)
 	purchaseHandler := purchase.NewPurchaseHandler(purchaseSvc)
+	authRepo := auth.NewAuthRepository(db)
+	authSvc := auth.NewAuthService(
+		authRepo,
+		[]byte(properties.JWT.Secret),
+		properties.JWT.AccessTokenDuration,
+		properties.JWT.RefreshTokenDuration,
+	)
+	authHandler := auth.NewAuthHandler(authSvc)
 
 	// Server setup
 	handlers := router.Handlers{
 		Health:   handler.NewHealthHandler(),
+		Auth:     authHandler,
 		Purchase: purchaseHandler,
 	}
 
@@ -88,6 +98,7 @@ func main() {
 			properties.EnablePprof,
 			properties.EnableSwagger,
 			properties.CORSAllowedOrigins,
+			[]byte(properties.JWT.Secret),
 		),
 	}
 

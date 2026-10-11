@@ -1,2 +1,1 @@
--- 000001_init.down.sql
-DROP TABLE health_check;
+DROP TABLE IF EXISTS health_check_test;

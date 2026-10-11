@@ -214,6 +214,8 @@ func (h *PurchaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // handleError maps service-layer errors to standardised HTTP responses.
 func (h *PurchaseHandler) handleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, apperrors.ErrUnauthorized):
+		httputil.WriteUnauthorized(w, "authentication required")
 	case errors.Is(err, apperrors.ErrNotFound):
 		httputil.WriteNotFound(w, "purchase not found")
 	case errors.Is(err, apperrors.ErrValidation):
