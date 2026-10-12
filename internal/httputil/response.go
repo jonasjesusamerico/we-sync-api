@@ -21,6 +21,9 @@ const (
 	ErrCodeBadRequest          = "BAD_REQUEST"
 	ErrCodeValidation          = "VALIDATION_ERROR"
 	ErrCodeNotFound            = "NOT_FOUND"
+	ErrCodeUnauthorized        = "UNAUTHORIZED"
+	ErrCodeForbidden           = "FORBIDDEN"
+	ErrCodeConflict            = "CONFLICT"
 	ErrCodeInternalServerError = "INTERNAL_SERVER_ERROR"
 )
 
@@ -52,6 +55,21 @@ func WriteValidationError(w http.ResponseWriter, message string) {
 // WriteNotFound writes a 404 Not Found error response.
 func WriteNotFound(w http.ResponseWriter, message string) {
 	WriteError(w, http.StatusNotFound, ErrCodeNotFound, message)
+}
+
+// WriteUnauthorized writes a 401 Unauthorized error response.
+func WriteUnauthorized(w http.ResponseWriter, message string) {
+	WriteError(w, http.StatusUnauthorized, ErrCodeUnauthorized, message)
+}
+
+// WriteForbidden writes a 403 Forbidden error response.
+func WriteForbidden(w http.ResponseWriter, message string) {
+	WriteError(w, http.StatusForbidden, ErrCodeForbidden, message)
+}
+
+// WriteConflict writes a 409 Conflict error response.
+func WriteConflict(w http.ResponseWriter, message string) {
+	WriteError(w, http.StatusConflict, ErrCodeConflict, message)
 }
 
 // WriteInternalError writes a 500 Internal Server Error response.

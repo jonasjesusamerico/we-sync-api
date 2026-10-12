@@ -6,9 +6,9 @@ import "context"
 // Implementations must use (nil, nil) to signal "not found" on GetByID.
 // Delete returns (false, nil) when no row with the given ID exists.
 type PurchaseRepository interface {
-	Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error)
-	GetByID(ctx context.Context, id int64) (*Purchase, error)
+	Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error)
+	GetByID(ctx context.Context, userID, id int64) (*Purchase, error)
 	List(ctx context.Context, filter ListFilter) (*PaginatedResult, error)
-	Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
-	Delete(ctx context.Context, id int64) (bool, error)
+	Update(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
+	Delete(ctx context.Context, userID, id int64) (bool, error)
 }

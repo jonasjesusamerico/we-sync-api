@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -19,6 +20,14 @@ type Config struct {
 	DatabaseReadProperties  DatabaseProperties
 	Logger                  LoggerProperties
 	Telemetry               TelemetryProperties
+	JWT                     JWTProperties
+}
+
+// JWTProperties holds the settings used to sign and expire authentication tokens.
+type JWTProperties struct {
+	Secret               string
+	AccessTokenDuration  time.Duration
+	RefreshTokenDuration time.Duration
 }
 
 // TelemetryProperties holds OpenTelemetry configuration.
@@ -144,6 +153,32 @@ func LoadProperties() (*Config, error) {
 		return nil, err
 	}
 
+	jwtSecret, err := getEnv("JWT_SECRET", "", true)
+	if err != nil {
+		return nil, err
+	}
+	if len([]byte(jwtSecret)) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET deve ter pelo menos 32 bytes")
+	}
+	if jwtSecret == "local-development-jwt-secret-change-before-production-2026" {
+		return nil, fmt.Errorf("JWT_SECRET não pode usar o segredo de desenvolvimento padrão")
+	}
+
+	jwtAccessTokenDuration, err := getEnvAsDuration("JWT_ACCESS_TOKEN_DURATION", "15m", false)
+	if err != nil {
+		return nil, err
+	}
+	if jwtAccessTokenDuration <= 0 || jwtAccessTokenDuration > 24*time.Hour {
+		return nil, fmt.Errorf("JWT_ACCESS_TOKEN_DURATION deve ser positiva e no máximo 24h")
+	}
+	jwtRefreshTokenDuration, err := getEnvAsDuration("JWT_REFRESH_TOKEN_DURATION", "168h", false)
+	if err != nil {
+		return nil, err
+	}
+	if jwtRefreshTokenDuration <= 0 || jwtRefreshTokenDuration > 30*24*time.Hour {
+		return nil, fmt.Errorf("JWT_REFRESH_TOKEN_DURATION deve ser positiva e no máximo 720h")
+	}
+
 	config := &Config{
 		AppEnvName:         appEnvName,
 		EnablePprof:        enablePprof,
@@ -178,6 +213,11 @@ func LoadProperties() (*Config, error) {
 			ServiceVersion: otelServiceVersion,
 			OTLPEndpoint:   otelEndpoint,
 			PrometheusPort: otelPrometheusPort,
+		},
+		JWT: JWTProperties{
+			Secret:               jwtSecret,
+			AccessTokenDuration:  jwtAccessTokenDuration,
+			RefreshTokenDuration: jwtRefreshTokenDuration,
 		},
 	}
 
@@ -223,4 +263,18 @@ func getEnvAsBool(key string, fallback string, required bool) (bool, error) {
 	}
 
 	return boolValue, nil
+}
+
+func getEnvAsDuration(key string, fallback string, required bool) (time.Duration, error) {
+	value, err := getEnv(key, fallback, required)
+	if err != nil {
+		return 0, err
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("valor inválido para a variável de ambiente %s: %q (esperado duração)", key, value)
+	}
+
+	return duration, nil
 }

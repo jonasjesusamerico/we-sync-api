@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/shopspring/decimal"
+	"pgregory.net/rapid"
 )
 
 // helpers
@@ -21,6 +23,72 @@ func validCreateRequest() *CreatePurchaseRequest {
 		Amount:        decimal.NewFromFloat(174.65),
 		Status:        StatusPending,
 	}}
+}
+
+func TestService_OperationsRequireUserID(t *testing.T) {
+	called := false
+	repo := &mockPurchaseRepository{
+		CreateFn: func(context.Context, int64, *CreatePurchaseRequest) (*Purchase, error) {
+			called = true
+			return nil, nil
+		},
+		GetByIDFn: func(context.Context, int64, int64) (*Purchase, error) {
+			called = true
+			return nil, nil
+		},
+		ListFn: func(context.Context, ListFilter) (*PaginatedResult, error) {
+			called = true
+			return nil, nil
+		},
+		UpdateFn: func(context.Context, int64, int64, *UpdatePurchaseRequest) (*Purchase, error) {
+			called = true
+			return nil, nil
+		},
+		DeleteFn: func(context.Context, int64, int64) (bool, error) {
+			called = true
+			return false, nil
+		},
+	}
+	svc := NewPurchaseService(repo)
+	if _, err := svc.Create(context.Background(), validCreateRequest()); !errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Errorf("Create() error = %v, want unauthorized", err)
+	}
+	if _, err := svc.GetByID(context.Background(), 1); !errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Errorf("GetByID() error = %v, want unauthorized", err)
+	}
+	if _, err := svc.List(context.Background(), ListFilter{}); !errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Errorf("List() error = %v, want unauthorized", err)
+	}
+	if _, err := svc.Update(context.Background(), 1, validUpdateRequest()); !errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Errorf("Update() error = %v, want unauthorized", err)
+	}
+	if err := svc.Delete(context.Background(), 1); !errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Errorf("Delete() error = %v, want unauthorized", err)
+	}
+	if called {
+		t.Fatal("repository was called without user ID")
+	}
+}
+
+func TestService_UserIDAlwaysComesFromContext(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		userID := rapid.Int64Range(1, 1_000_000).Draw(t, "userID")
+		captured := int64(0)
+		repo := &mockPurchaseRepository{
+			ListFn: func(_ context.Context, filter ListFilter) (*PaginatedResult, error) {
+				captured = filter.UserID
+				return &PaginatedResult{}, nil
+			},
+		}
+		svc := NewPurchaseService(repo)
+		_, err := svc.List(auth.WithUserID(context.Background(), userID), ListFilter{UserID: userID + 1})
+		if err != nil {
+			t.Fatalf("List() error = %v", err)
+		}
+		if captured != userID {
+			t.Fatalf("repository received user ID %d, want %d", captured, userID)
+		}
+	})
 }
 
 func validUpdateRequest() *UpdatePurchaseRequest {
@@ -55,12 +123,12 @@ func TestService_Create_Success(t *testing.T) {
 	expected := purchaseFromCreate(req)
 
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		CreateFn: func(_ context.Context, r *CreatePurchaseRequest) (*Purchase, error) {
+		CreateFn: func(_ context.Context, _ int64, r *CreatePurchaseRequest) (*Purchase, error) {
 			return expected, nil
 		},
 	})
 
-	got, err := svc.Create(context.Background(), req)
+	got, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +143,7 @@ func TestService_Create_MissingPurchaseDate(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Create(context.Background(), req)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -87,7 +155,7 @@ func TestService_Create_MissingDescription(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Create(context.Background(), req)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -99,7 +167,7 @@ func TestService_Create_MissingSector(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Create(context.Background(), req)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -111,7 +179,7 @@ func TestService_Create_InvalidPaymentMethod(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Create(context.Background(), req)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -123,7 +191,7 @@ func TestService_Create_AmountZero(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Create(context.Background(), req)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -135,7 +203,7 @@ func TestService_Create_AmountNegative(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Create(context.Background(), req)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -147,7 +215,7 @@ func TestService_Create_InvalidStatus(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Create(context.Background(), req)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -157,12 +225,12 @@ func TestService_Create_RepositoryError(t *testing.T) {
 	repoErr := errors.New("db error")
 
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
+		CreateFn: func(_ context.Context, _ int64, _ *CreatePurchaseRequest) (*Purchase, error) {
 			return nil, repoErr
 		},
 	})
 
-	_, err := svc.Create(context.Background(), validCreateRequest())
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), validCreateRequest())
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}
@@ -174,12 +242,12 @@ func TestService_GetByID_Found(t *testing.T) {
 	want := &Purchase{ID: 42, Description: "Test"}
 
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		GetByIDFn: func(_ context.Context, id int64) (*Purchase, error) {
+		GetByIDFn: func(_ context.Context, _ int64, id int64) (*Purchase, error) {
 			return want, nil
 		},
 	})
 
-	got, err := svc.GetByID(context.Background(), 42)
+	got, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -190,12 +258,12 @@ func TestService_GetByID_Found(t *testing.T) {
 
 func TestService_GetByID_NotFound(t *testing.T) {
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		GetByIDFn: func(_ context.Context, _ int64) (*Purchase, error) {
+		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) {
 			return nil, nil
 		},
 	})
 
-	_, err := svc.GetByID(context.Background(), 99)
+	_, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 99)
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -205,12 +273,12 @@ func TestService_GetByID_RepositoryError(t *testing.T) {
 	repoErr := errors.New("connection failed")
 
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		GetByIDFn: func(_ context.Context, _ int64) (*Purchase, error) {
+		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) {
 			return nil, repoErr
 		},
 	})
 
-	_, err := svc.GetByID(context.Background(), 1)
+	_, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 1)
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}
@@ -229,7 +297,7 @@ func TestService_List_DefaultPagination(t *testing.T) {
 	})
 
 	// Pass zero values — service must apply defaults.
-	_, err := svc.List(context.Background(), ListFilter{})
+	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -251,7 +319,7 @@ func TestService_List_CustomPagination(t *testing.T) {
 		},
 	})
 
-	_, err := svc.List(context.Background(), ListFilter{Page: 3, PageSize: 5})
+	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{Page: 3, PageSize: 5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -266,7 +334,7 @@ func TestService_List_CustomPagination(t *testing.T) {
 func TestService_List_PageSizeExceedsMax(t *testing.T) {
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.List(context.Background(), ListFilter{PageSize: MaxPageSize + 1})
+	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{PageSize: MaxPageSize + 1})
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation for page_size > MaxPageSize, got %v", err)
 	}
@@ -279,12 +347,12 @@ func TestService_Update_Success(t *testing.T) {
 	want := &Purchase{ID: 1, Description: req.Description}
 
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		UpdateFn: func(_ context.Context, id int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
+		UpdateFn: func(_ context.Context, _ int64, id int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
 			return want, nil
 		},
 	})
 
-	got, err := svc.Update(context.Background(), 1, req)
+	got, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,12 +363,12 @@ func TestService_Update_Success(t *testing.T) {
 
 func TestService_Update_NotFound(t *testing.T) {
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		UpdateFn: func(_ context.Context, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
+		UpdateFn: func(_ context.Context, _ int64, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
 			return nil, nil
 		},
 	})
 
-	_, err := svc.Update(context.Background(), 99, validUpdateRequest())
+	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 99, validUpdateRequest())
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -312,7 +380,7 @@ func TestService_Update_ValidationError(t *testing.T) {
 
 	svc := NewPurchaseService(&mockPurchaseRepository{})
 
-	_, err := svc.Update(context.Background(), 1, req)
+	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -322,24 +390,24 @@ func TestService_Update_ValidationError(t *testing.T) {
 
 func TestService_Delete_Success(t *testing.T) {
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		DeleteFn: func(_ context.Context, _ int64) (bool, error) {
+		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) {
 			return true, nil
 		},
 	})
 
-	if err := svc.Delete(context.Background(), 1); err != nil {
+	if err := svc.Delete(auth.WithUserID(context.Background(), 1), 1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestService_Delete_NotFound(t *testing.T) {
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		DeleteFn: func(_ context.Context, _ int64) (bool, error) {
+		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) {
 			return false, nil
 		},
 	})
 
-	err := svc.Delete(context.Background(), 99)
+	err := svc.Delete(auth.WithUserID(context.Background(), 1), 99)
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -349,12 +417,12 @@ func TestService_Delete_RepositoryError(t *testing.T) {
 	repoErr := errors.New("delete failed")
 
 	svc := NewPurchaseService(&mockPurchaseRepository{
-		DeleteFn: func(_ context.Context, _ int64) (bool, error) {
+		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) {
 			return false, repoErr
 		},
 	})
 
-	err := svc.Delete(context.Background(), 1)
+	err := svc.Delete(auth.WithUserID(context.Background(), 1), 1)
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}

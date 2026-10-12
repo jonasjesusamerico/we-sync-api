@@ -98,6 +98,7 @@ func (d *Date) UnmarshalJSON(b []byte) error {
 // Purchase represents a purchase entry record.
 type Purchase struct {
 	ID            int64           `json:"id"`
+	UserID        int64           `json:"user_id"`
 	PurchaseDate  Date            `json:"purchase_date"`
 	Description   string          `json:"description"`
 	Sector        string          `json:"sector"`
@@ -128,6 +129,7 @@ type UpdatePurchaseRequest struct{ PurchaseRequest }
 
 // ListFilter holds the query parameters for filtering and paginating purchase entries.
 type ListFilter struct {
+	UserID        int64
 	Month         int
 	Year          int
 	Status        Status

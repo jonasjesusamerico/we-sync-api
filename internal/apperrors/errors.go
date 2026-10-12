@@ -13,6 +13,15 @@ var (
 
 	// ErrValidation is returned when input data fails business rule validation.
 	ErrValidation = errors.New("validation error")
+
+	// ErrUnauthorized is returned when authentication is required or invalid.
+	ErrUnauthorized = errors.New("unauthorized")
+
+	// ErrForbidden is returned when an authenticated caller lacks permission.
+	ErrForbidden = errors.New("forbidden")
+
+	// ErrConflict is returned when an operation conflicts with existing state.
+	ErrConflict = errors.New("conflict")
 )
 
 // ValidationError wraps ErrValidation with a human-readable message.

@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/shopspring/decimal"
 )
 
@@ -68,12 +69,19 @@ func (s *purchaseService) Create(ctx context.Context, req *CreatePurchaseRequest
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Create")
 	defer span.End()
 
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		return nil, apperrors.ErrUnauthorized
+	}
+	if req == nil {
+		return nil, apperrors.NewValidationError("request is required")
+	}
 	if err := validateRequest(&req.PurchaseRequest); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
-	p, err := s.repo.Create(ctx, req)
+	p, err := s.repo.Create(ctx, userID, req)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -102,9 +110,13 @@ func (s *purchaseService) GetByID(ctx context.Context, id int64) (*Purchase, err
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.GetByID")
 	defer span.End()
 
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		return nil, apperrors.ErrUnauthorized
+	}
 	span.SetAttributes(attribute.Int64("purchase.id", id))
 
-	p, err := s.repo.GetByID(ctx, id)
+	p, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -125,6 +137,11 @@ func (s *purchaseService) List(ctx context.Context, filter ListFilter) (*Paginat
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.List")
 	defer span.End()
 
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		return nil, apperrors.ErrUnauthorized
+	}
+	filter.UserID = userID
 	if filter.Page <= 0 {
 		filter.Page = 1
 	}
@@ -164,14 +181,21 @@ func (s *purchaseService) Update(ctx context.Context, id int64, req *UpdatePurch
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Update")
 	defer span.End()
 
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		return nil, apperrors.ErrUnauthorized
+	}
 	span.SetAttributes(attribute.Int64("purchase.id", id))
 
+	if req == nil {
+		return nil, apperrors.NewValidationError("request is required")
+	}
 	if err := validateRequest(&req.PurchaseRequest); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
-	p, err := s.repo.Update(ctx, id, req)
+	p, err := s.repo.Update(ctx, userID, id, req)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -203,9 +227,13 @@ func (s *purchaseService) Delete(ctx context.Context, id int64) error {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Delete")
 	defer span.End()
 
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		return apperrors.ErrUnauthorized
+	}
 	span.SetAttributes(attribute.Int64("purchase.id", id))
 
-	found, err := s.repo.Delete(ctx, id)
+	found, err := s.repo.Delete(ctx, userID, id)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
