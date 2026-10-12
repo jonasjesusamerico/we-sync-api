@@ -160,14 +160,23 @@ func LoadProperties() (*Config, error) {
 	if len([]byte(jwtSecret)) < 32 {
 		return nil, fmt.Errorf("JWT_SECRET deve ter pelo menos 32 bytes")
 	}
+	if jwtSecret == "local-development-jwt-secret-change-before-production-2026" {
+		return nil, fmt.Errorf("JWT_SECRET não pode usar o segredo de desenvolvimento padrão")
+	}
 
 	jwtAccessTokenDuration, err := getEnvAsDuration("JWT_ACCESS_TOKEN_DURATION", "15m", false)
 	if err != nil {
 		return nil, err
 	}
+	if jwtAccessTokenDuration <= 0 || jwtAccessTokenDuration > 24*time.Hour {
+		return nil, fmt.Errorf("JWT_ACCESS_TOKEN_DURATION deve ser positiva e no máximo 24h")
+	}
 	jwtRefreshTokenDuration, err := getEnvAsDuration("JWT_REFRESH_TOKEN_DURATION", "168h", false)
 	if err != nil {
 		return nil, err
+	}
+	if jwtRefreshTokenDuration <= 0 || jwtRefreshTokenDuration > 30*24*time.Hour {
+		return nil, fmt.Errorf("JWT_REFRESH_TOKEN_DURATION deve ser positiva e no máximo 720h")
 	}
 
 	config := &Config{

@@ -2,16 +2,18 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -31,6 +33,7 @@ type AuthService interface {
 	Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error)
 	Login(ctx context.Context, req *LoginRequest) (*TokenResponse, error)
 	Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error)
+	Logout(ctx context.Context, req *RefreshRequest) error
 }
 
 type authService struct {
@@ -58,7 +61,8 @@ func (s *authService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 	if req == nil {
 		return nil, recordAuthError(span, apperrors.NewValidationError("request is required"))
 	}
-	if err := validateEmail(req.Email); err != nil {
+	email := normalizeEmail(req.Email)
+	if err := validateEmail(email); err != nil {
 		return nil, recordAuthError(span, err)
 	}
 	if err := validatePassword(req.Password); err != nil {
@@ -70,7 +74,7 @@ func (s *authService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register hash password: %w", err))
 	}
 
-	user, err := s.repo.CreateUser(ctx, req.Email, string(passwordHash))
+	user, err := s.repo.CreateUser(ctx, email, string(passwordHash))
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register: %w", err))
 	}
@@ -95,12 +99,12 @@ func (s *authService) Login(ctx context.Context, req *LoginRequest) (*TokenRespo
 		return nil, recordAuthError(span, apperrors.NewValidationError("email and password are required"))
 	}
 
-	user, err := s.repo.GetUserByEmail(ctx, req.Email)
+	user, err := s.repo.GetUserByEmail(ctx, normalizeEmail(req.Email))
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Login: %w", err))
 	}
 	if user == nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
-		logInvalidLogin(ctx, req.Email)
+		logInvalidLogin(ctx)
 		return nil, recordAuthError(span, newInvalidCredentialsError())
 	}
 
@@ -136,7 +140,10 @@ func (s *authService) Refresh(ctx context.Context, req *RefreshRequest) (*TokenR
 	if err != nil {
 		return nil, recordAuthError(span, err)
 	}
-	rawRefreshToken := uuid.NewString()
+	rawRefreshToken, err := newRefreshToken()
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.Refresh generate token: %w", err))
+	}
 	newExpiresAt := time.Now().Add(s.refreshTTL)
 	if err := s.repo.RotateRefreshToken(ctx, token.ID, token.UserID, sha256Hex(rawRefreshToken), newExpiresAt); err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Refresh: %w", err))
@@ -150,12 +157,25 @@ func (s *authService) Refresh(ctx context.Context, req *RefreshRequest) (*TokenR
 	}, nil
 }
 
+func (s *authService) Logout(ctx context.Context, req *RefreshRequest) error {
+	if req == nil || req.RefreshToken == "" {
+		return apperrors.NewValidationError("refresh_token is required")
+	}
+	if err := s.repo.RevokeRefreshToken(ctx, sha256Hex(req.RefreshToken)); err != nil {
+		return fmt.Errorf("authService.Logout: %w", err)
+	}
+	return nil
+}
+
 func (s *authService) issueTokens(ctx context.Context, userID int64) (*TokenResponse, error) {
 	accessToken, err := s.issueAccessToken(userID)
 	if err != nil {
 		return nil, err
 	}
-	rawRefreshToken := uuid.NewString()
+	rawRefreshToken, err := newRefreshToken()
+	if err != nil {
+		return nil, fmt.Errorf("authService.issueTokens generate token: %w", err)
+	}
 	if err := s.repo.CreateRefreshToken(ctx, userID, sha256Hex(rawRefreshToken), time.Now().Add(s.refreshTTL)); err != nil {
 		return nil, fmt.Errorf("authService.issueTokens: %w", err)
 	}
@@ -171,10 +191,24 @@ func (s *authService) issueAccessToken(userID int64) (string, error) {
 	now := time.Now()
 	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{
 		Subject:   strconv.FormatInt(userID, 10),
+		Issuer:    JWTIssuer,
+		Audience:  jwt.ClaimStrings{JWTAudience},
 		IssuedAt:  jwt.NewNumericDate(now),
 		ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
 	}}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
+}
+
+func newRefreshToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 func validateEmail(email string) error {
@@ -209,6 +243,6 @@ func recordAuthError(span trace.Span, err error) error {
 	return err
 }
 
-func logInvalidLogin(ctx context.Context, email string) {
-	logger.FromContext(ctx).Warn("invalid login credentials", "user_email", email)
+func logInvalidLogin(ctx context.Context) {
+	logger.FromContext(ctx).Warn("invalid login credentials")
 }

@@ -10,6 +10,66 @@
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
+@email = user@example.com
+@password = password123
+@accessToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ3ZS1zeW5jLWFwaSIsInN1YiI6IjIiLCJhdWQiOlsid2Utc3luYy1hcGkiXSwiZXhwIjoxNzkxNzY0NzQwLCJpYXQiOjE3OTE3NjM4NDB9.kcfmbmZrBh9EvxKqnG0em9nA6LJEqXh4HegVlzkGQvY
+@refreshToken = J4cBH6R-AWVD0YYlZACJf34QcKpOEydJGqV7zLIWKBY
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTHENTICATION
+# Os exemplos abaixo usam curl e podem ser executados no terminal.
+# O logout revoga o refresh token; depois dele, o mesmo token não deve ser
+# aceito novamente pelo endpoint de refresh.
+# ─────────────────────────────────────────────────────────────────────────────
+
+### AUTH — Cadastro → 201
+
+curl -i -X POST "{{baseUrl}}/auth/register" \
+  -H "Content-Type: {{contentType}}" \
+  -d '{"email":"{{email}}","password":"{{password}}"}'
+
+### AUTH — Login válido → 200
+# Salve access_token e refresh_token da resposta para os próximos exemplos.
+
+curl -i -X POST "{{baseUrl}}/auth/login" \
+  -H "Content-Type: {{contentType}}" \
+  -d '{"email":"{{email}}","password":"{{password}}"}'
+
+### AUTH — Login com senha incorreta → 401
+
+curl -i -X POST "{{baseUrl}}/auth/login" \
+  -H "Content-Type: {{contentType}}" \
+  -d '{"email":"{{email}}","password":"senha-incorreta"}'
+
+### AUTH — Login com usuário inexistente → 401
+
+curl -i -X POST "{{baseUrl}}/auth/login" \
+  -H "Content-Type: {{contentType}}" \
+  -d '{"email":"nao-existe@example.com","password":"{{password}}"}'
+
+### AUTH — Refresh válido → 200
+# O refresh é rotacionado. Use o novo refresh_token retornado na próxima chamada.
+
+curl -i -X POST "{{baseUrl}}/auth/refresh" \
+  -H "Content-Type: {{contentType}}" \
+  -d '{"refresh_token":"{{refreshToken}}"}'
+
+### AUTH — Logout → 204
+
+curl -i -X POST "{{baseUrl}}/auth/logout" \
+  -H "Content-Type: {{contentType}}" \
+  -d '{"refresh_token":"{{refreshToken}}"}'
+
+### AUTH — Refresh após logout ou rotação do token antigo → 401
+
+# curl -i -X POST "{{baseUrl}}/auth/refresh" \
+#   -H "Content-Type: {{contentType}}" \
+#   -d '{"refresh_token":"{{refreshToken}}"}'
+
+### AUTH — Acesso a rota protegida com access token → 200
+
+curl -i -X GET "{{baseUrl}}/purchases" \
+  -H "Authorization: Bearer {{accessToken}}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CREATE  POST /purchases  → 201

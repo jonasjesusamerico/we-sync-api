@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -13,6 +14,10 @@ import (
 )
 
 func JWT(secret []byte) func(http.Handler) http.Handler {
+	return JWTWithConfig(secret, auth.JWTIssuer, auth.JWTAudience, 24*time.Hour)
+}
+
+func JWTWithConfig(secret []byte, issuer, audience string, maxTTL time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -28,8 +33,17 @@ func JWT(secret []byte) func(http.Handler) http.Handler {
 					return nil, jwt.ErrSignatureInvalid
 				}
 				return secret, nil
-			})
+			}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+				jwt.WithIssuer(issuer), jwt.WithAudience(audience))
 			if err != nil || !token.Valid {
+				httputil.WriteUnauthorized(w, "token de autenticação inválido")
+				return
+			}
+			now := time.Now()
+			if claims.IssuedAt == nil || claims.ExpiresAt == nil ||
+				claims.ExpiresAt.Time.Before(now) || !claims.ExpiresAt.Time.After(claims.IssuedAt.Time) ||
+				claims.IssuedAt.Time.After(now.Add(time.Minute)) ||
+				(maxTTL > 0 && claims.ExpiresAt.Time.After(claims.IssuedAt.Time.Add(maxTTL))) {
 				httputil.WriteUnauthorized(w, "token de autenticação inválido")
 				return
 			}

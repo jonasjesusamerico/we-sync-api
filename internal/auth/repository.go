@@ -16,4 +16,5 @@ type AuthRepository interface {
 	GetRefreshToken(ctx context.Context, tokenHash string) (*RefreshToken, error)
 	// RotateRefreshToken revokes the old token and creates a new one atomically.
 	RotateRefreshToken(ctx context.Context, oldID, userID int64, newTokenHash string, newExpiresAt time.Time) error
+	RevokeRefreshToken(ctx context.Context, tokenHash string) error
 }

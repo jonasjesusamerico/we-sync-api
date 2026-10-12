@@ -17,6 +17,7 @@ type mockAuthService struct {
 	registerFn func(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	loginFn    func(context.Context, *LoginRequest) (*TokenResponse, error)
 	refreshFn  func(context.Context, *RefreshRequest) (*TokenResponse, error)
+	logoutFn   func(context.Context, *RefreshRequest) error
 }
 
 func (m *mockAuthService) Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error) {
@@ -27,6 +28,12 @@ func (m *mockAuthService) Login(ctx context.Context, req *LoginRequest) (*TokenR
 }
 func (m *mockAuthService) Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error) {
 	return m.refreshFn(ctx, req)
+}
+func (m *mockAuthService) Logout(ctx context.Context, req *RefreshRequest) error {
+	if m.logoutFn != nil {
+		return m.logoutFn(ctx, req)
+	}
+	return nil
 }
 
 func decodeAPIError(t *testing.T, recorder *httptest.ResponseRecorder) httputil.APIError {

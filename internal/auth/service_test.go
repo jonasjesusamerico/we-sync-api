@@ -76,6 +76,36 @@ func TestAuthService_LoginIssuesClaimsAndHashesRefreshToken(t *testing.T) {
 	if err != nil || !token.Valid || claims.Subject != "7" {
 		t.Fatalf("invalid access token: valid=%v err=%v subject=%q", token.Valid, err, claims.Subject)
 	}
+	if claims.Issuer != JWTIssuer || len(claims.Audience) != 1 || claims.Audience[0] != JWTAudience {
+		t.Fatalf("unexpected issuer/audience: %q %v", claims.Issuer, claims.Audience)
+	}
+}
+
+func TestAuthService_NormalizesEmailForRegisterAndLogin(t *testing.T) {
+	var registeredEmail, loginEmail string
+	hash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewAuthService(&mockAuthRepository{
+		CreateUserFn: func(_ context.Context, email, _ string) (*User, error) {
+			registeredEmail = email
+			return &User{ID: 1, Email: email}, nil
+		},
+		GetUserByEmailFn: func(_ context.Context, email string) (*User, error) {
+			loginEmail = email
+			return &User{ID: 1, PasswordHash: string(hash)}, nil
+		},
+	}, []byte(testSecret), time.Minute, time.Hour)
+	if _, err := svc.Register(context.Background(), &RegisterRequest{Email: " User@Example.COM ", Password: "password123"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Login(context.Background(), &LoginRequest{Email: " User@Example.COM ", Password: "password123"}); err != nil {
+		t.Fatal(err)
+	}
+	if registeredEmail != "user@example.com" || loginEmail != registeredEmail {
+		t.Fatalf("emails = %q, %q", registeredEmail, loginEmail)
+	}
 }
 
 func TestAuthService_ValidatePasswordProperty(t *testing.T) {

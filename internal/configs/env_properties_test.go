@@ -23,6 +23,11 @@ func TestLoadProperties_JWTSecret(t *testing.T) {
 			wantError: "pelo menos 32 bytes",
 		},
 		{
+			name:      "insecure development default",
+			secret:    "local-development-jwt-secret-change-before-production-2026",
+			wantError: "segredo de desenvolvimento padrão",
+		},
+		{
 			name:   "valid",
 			secret: strings.Repeat("a", 32),
 		},
@@ -91,6 +96,29 @@ func TestLoadProperties_JWTDurations(t *testing.T) {
 			}
 			if config.JWT.RefreshTokenDuration != tt.wantRefresh {
 				t.Errorf("RefreshTokenDuration = %s, want %s", config.JWT.RefreshTokenDuration, tt.wantRefresh)
+			}
+		})
+	}
+}
+
+func TestLoadProperties_RejectsInvalidJWTDurations(t *testing.T) {
+	for _, value := range []string{"0s", "-1m", "25h"} {
+		t.Run("access_"+value, func(t *testing.T) {
+			setRequiredEnvironment(t)
+			t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+			t.Setenv("JWT_ACCESS_TOKEN_DURATION", value)
+			if _, err := LoadProperties(); err == nil {
+				t.Fatal("LoadProperties() error = nil, want invalid access duration error")
+			}
+		})
+	}
+	for _, value := range []string{"0s", "-1m", "721h"} {
+		t.Run("refresh_"+value, func(t *testing.T) {
+			setRequiredEnvironment(t)
+			t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+			t.Setenv("JWT_REFRESH_TOKEN_DURATION", value)
+			if _, err := LoadProperties(); err == nil {
+				t.Fatal("LoadProperties() error = nil, want invalid refresh duration error")
 			}
 		})
 	}

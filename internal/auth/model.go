@@ -60,3 +60,8 @@ type RefreshToken struct {
 type Claims struct {
 	jwt.RegisteredClaims
 }
+
+const (
+	JWTIssuer   = "we-sync-api"
+	JWTAudience = "we-sync-api"
+)

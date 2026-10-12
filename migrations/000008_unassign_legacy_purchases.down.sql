@@ -1,0 +1,2 @@
+-- Ownership of legacy records is unknown and cannot be restored safely.
+-- The down migration intentionally leaves those records unassigned.

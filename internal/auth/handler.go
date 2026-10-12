@@ -90,6 +90,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteBadRequest(w, "invalid request body")
 		return
 	}
+
 	if req.RefreshToken == "" {
 		httputil.WriteBadRequest(w, "refresh_token is required")
 		return
@@ -101,6 +102,28 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, response)
+}
+
+// Logout revokes a refresh token.
+// @Summary Revoke a refresh token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body RefreshRequest true "Refresh token"
+// @Success 204
+// @Failure 400 {object} httputil.APIError
+// @Router /auth/logout [post]
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	var req RefreshRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteBadRequest(w, "invalid request body")
+		return
+	}
+	if err := h.svc.Logout(r.Context(), &req); err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *AuthHandler) handleError(w http.ResponseWriter, r *http.Request, err error) {

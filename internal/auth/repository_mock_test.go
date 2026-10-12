@@ -11,6 +11,7 @@ type mockAuthRepository struct {
 	CreateRefreshTokenFn func(context.Context, int64, string, time.Time) error
 	GetRefreshTokenFn    func(context.Context, string) (*RefreshToken, error)
 	RotateRefreshTokenFn func(context.Context, int64, int64, string, time.Time) error
+	RevokeRefreshTokenFn func(context.Context, string) error
 }
 
 func (m *mockAuthRepository) CreateUser(ctx context.Context, email, passwordHash string) (*User, error) {
@@ -46,4 +47,11 @@ func (m *mockAuthRepository) RotateRefreshToken(ctx context.Context, oldID, user
 		return nil
 	}
 	return m.RotateRefreshTokenFn(ctx, oldID, userID, newTokenHash, newExpiresAt)
+}
+
+func (m *mockAuthRepository) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
+	if m.RevokeRefreshTokenFn == nil {
+		return nil
+	}
+	return m.RevokeRefreshTokenFn(ctx, tokenHash)
 }

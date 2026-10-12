@@ -40,7 +40,13 @@ func TestJWTRejectsInvalidTokensProperty(t *testing.T) {
 func signedToken(t *testing.T, secret []byte, subject string, expires time.Time) string {
 	t.Helper()
 	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, auth.Claims{
-		RegisteredClaims: jwt.RegisteredClaims{Subject: subject, ExpiresAt: jwt.NewNumericDate(expires)},
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   subject,
+			Issuer:    auth.JWTIssuer,
+			Audience:  jwt.ClaimStrings{auth.JWTAudience},
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(expires),
+		},
 	}).SignedString(secret)
 	if err != nil {
 		t.Fatal(err)
@@ -85,4 +91,62 @@ func TestJWTRejectsExpiredAndWrongSignature(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJWTRejectsMissingClaimsAndWrongAlgorithm(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+	}{
+		{
+			name: "missing expiration",
+			token: mustSignClaims(t, jwt.SigningMethodHS256, auth.Claims{RegisteredClaims: jwt.RegisteredClaims{
+				Subject:  "42",
+				Issuer:   auth.JWTIssuer,
+				Audience: jwt.ClaimStrings{auth.JWTAudience},
+				IssuedAt: jwt.NewNumericDate(time.Now()),
+			}}, []byte(jwtTestSecret)),
+		},
+		{
+			name: "missing subject",
+			token: mustSignClaims(t, jwt.SigningMethodHS256, auth.Claims{RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    auth.JWTIssuer,
+				Audience:  jwt.ClaimStrings{auth.JWTAudience},
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
+			}}, []byte(jwtTestSecret)),
+		},
+		{
+			name: "wrong algorithm",
+			token: mustSignClaims(t, jwt.SigningMethodHS512, auth.Claims{RegisteredClaims: jwt.RegisteredClaims{
+				Subject:   "42",
+				Issuer:    auth.JWTIssuer,
+				Audience:  jwt.ClaimStrings{auth.JWTAudience},
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
+			}}, []byte(jwtTestSecret)),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			request.Header.Set("Authorization", "Bearer "+test.token)
+			recorder := httptest.NewRecorder()
+			JWT([]byte(jwtTestSecret))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("next was called")
+			})).ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", recorder.Code)
+			}
+		})
+	}
+}
+
+func mustSignClaims(t *testing.T, method jwt.SigningMethod, claims auth.Claims, secret []byte) string {
+	t.Helper()
+	token, err := jwt.NewWithClaims(method, claims).SignedString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }

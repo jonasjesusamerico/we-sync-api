@@ -78,7 +78,9 @@ func (r *authPostgresRepository) CreateUser(ctx context.Context, email, password
 	return &user, nil
 }
 
-// GetUserByEmail retrieves a user using the read database.
+// GetUserByEmail retrieves a user using the write database. Authentication
+// needs read-after-write consistency when a user logs in immediately after
+// registration; ordinary read-only queries continue to use the read pool.
 // It returns (nil, nil) when no user exists for the email.
 func (r *authPostgresRepository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	const query = `
@@ -94,7 +96,7 @@ func (r *authPostgresRepository) GetUserByEmail(ctx context.Context, email strin
 	defer cancel()
 
 	var user User
-	err := r.db.Read.QueryRowContext(ctx, query, email).Scan(
+	err := r.db.Write.QueryRowContext(ctx, query, email).Scan(
 		&user.ID,
 		&user.Email,
 		&user.PasswordHash,
@@ -197,6 +199,7 @@ func (r *authPostgresRepository) RotateRefreshToken(ctx context.Context, oldID, 
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("authPostgresRepository.RotateRefreshToken begin: %w", err)
 	}
+
 	defer tx.Rollback()
 
 	result, err := tx.ExecContext(ctx, revokeQuery, oldID, userID)
@@ -229,5 +232,15 @@ func (r *authPostgresRepository) RotateRefreshToken(ctx context.Context, oldID, 
 		return fmt.Errorf("authPostgresRepository.RotateRefreshToken commit: %w", err)
 	}
 
+	return nil
+}
+
+func (r *authPostgresRepository) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
+	const query = `UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1 AND revoked = FALSE`
+	ctx, cancel := context.WithTimeout(ctx, authDBTimeout)
+	defer cancel()
+	if _, err := r.db.Write.ExecContext(ctx, query, tokenHash); err != nil {
+		return fmt.Errorf("authPostgresRepository.RevokeRefreshToken: %w", err)
+	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/pprof"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -73,10 +74,11 @@ func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
 			r.Post("/register", h.Auth.Register)
 			r.Post("/login", h.Auth.Login)
 			r.Post("/refresh", h.Auth.Refresh)
+			r.Post("/logout", h.Auth.Logout)
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.JWT(jwtSecret))
+			r.Use(middleware.JWTWithConfig(jwtSecret, auth.JWTIssuer, auth.JWTAudience, 24*time.Hour))
 			r.Route("/purchases", func(r chi.Router) {
 				r.Get("/", h.Purchase.List)
 				r.Post("/", h.Purchase.Create)
