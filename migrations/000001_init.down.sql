@@ -1,1 +1,0 @@
-DROP TABLE IF EXISTS health_check_test;
