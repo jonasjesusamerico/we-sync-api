@@ -71,6 +71,10 @@ Não existe Makefile nem CI — não crie sem pedido.
 Tarefa grande (novo domínio, schema com dados, auth, nova dependência, contrato público): plano curto e
 confirmação antes de implementar. Tarefa pequena: execute direto.
 
+**Spec-Driven Development:** features não triviais seguem `docs/specs/README.md`
+(spec → plan → tasks → implement, templates em `docs/specs/_templates/`). Não avance de fase sem o gate
+da anterior; ao implementar, marque as tasks e mantenha spec e código coerentes.
+
 ## Regras inegociáveis
 
 - **Escopo:** só o necessário; refatorações e "melhorias de passagem" vão para o resumo como sugestão.
