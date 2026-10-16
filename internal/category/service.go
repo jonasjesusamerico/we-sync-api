@@ -2,6 +2,7 @@ package category
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -56,7 +57,7 @@ func (s *categoryService) Create(ctx context.Context, req *CreateCategoryRequest
 
 	c, err := s.repo.Create(ctx, userID, req)
 	if err != nil {
-		if err == apperrors.ErrConflict {
+		if errors.Is(err, apperrors.ErrConflict) {
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
@@ -139,7 +140,7 @@ func (s *categoryService) Update(ctx context.Context, id int64, req *UpdateCateg
 
 	c, err := s.repo.Update(ctx, userID, id, req)
 	if err != nil {
-		if err == apperrors.ErrConflict {
+		if errors.Is(err, apperrors.ErrConflict) {
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
@@ -192,7 +193,7 @@ func (s *categoryService) Delete(ctx context.Context, id int64) error {
 
 	found, err := s.repo.Delete(ctx, userID, id)
 	if err != nil {
-		if err == apperrors.ErrConflict {
+		if errors.Is(err, apperrors.ErrConflict) {
 			span.SetStatus(codes.Error, err.Error())
 			return err
 		}

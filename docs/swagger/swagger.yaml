@@ -180,7 +180,7 @@ info:
   contact:
     name: Jonas Jesus Americo
     url: https://github.com/jonasjesusamerico
-  description: API de gerenciamento financeiro — lançamentos de contas mensais.
+  description: Personal finance API — monthly purchase entries.
   title: we-sync API
   version: "1.0"
 paths:
@@ -526,7 +526,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new monthly account entry (lançamento).
+      description: Creates a new monthly purchase entry.
       parameters:
       - description: Purchase entry data
         in: body

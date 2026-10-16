@@ -35,7 +35,7 @@ services:
       - maintenance_work_mem=16MB
       - -c
       - effective_cache_size=128MB
-      # 2 apps × 5 write + 5 read = 20 conexões máximas
+      # 2 apps × (5 write + 5 read) = 20 max connections
       - -c
       - max_connections=20
 

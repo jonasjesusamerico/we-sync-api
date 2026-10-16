@@ -14,39 +14,39 @@ type DB struct {
 }
 
 func NewConnection(config *Config) (*DB, error) {
-	slog.Info("Estabelecendo conexão com o banco de dados de escrita...")
+	slog.Info("Opening write database connection")
 	writeDB, err := sql.Open("pgx", config.DatabaseWriteProperties.DATABASE_DSN)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.Info("Configurando pool de conexões de escrita...")
+	slog.Info("Configuring write connection pool")
 	configurePool(writeDB, config.DatabaseWriteProperties)
 
-	slog.Info("Verificando conexão com o banco de dados de escrita...")
+	slog.Info("Pinging write database")
 	if err := writeDB.Ping(); err != nil {
 		_ = writeDB.Close()
 		return nil, err
 	}
 
-	slog.Info("Estabelecendo conexão com o banco de dados de leitura...")
+	slog.Info("Opening read database connection")
 	readDB, err := sql.Open("pgx", config.DatabaseReadProperties.DATABASE_DSN)
 	if err != nil {
 		_ = writeDB.Close()
 		return nil, err
 	}
 
-	slog.Info("Configurando pool de conexões de leitura...")
+	slog.Info("Configuring read connection pool")
 	configurePool(readDB, config.DatabaseReadProperties)
 
-	slog.Info("Verificando conexão com o banco de dados de leitura...")
+	slog.Info("Pinging read database")
 	if err := readDB.Ping(); err != nil {
 		_ = writeDB.Close()
 		_ = readDB.Close()
 		return nil, err
 	}
 
-	slog.Info("Todas as conexões com os bancos de dados estabelecidas com sucesso!")
+	slog.Info("All database connections established")
 	return &DB{
 		Write: writeDB,
 		Read:  readDB,

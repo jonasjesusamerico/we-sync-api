@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -26,6 +27,9 @@ import (
 
 const authTracerName = "we-sync-api/auth"
 
+// defaultPasswordCost is the bcrypt cost used for stored password hashes.
+const defaultPasswordCost = 12
+
 var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 // AuthService defines the authentication business operations.
@@ -37,20 +41,36 @@ type AuthService interface {
 }
 
 type authService struct {
-	repo       AuthRepository
-	jwtSecret  []byte
-	accessTTL  time.Duration
-	refreshTTL time.Duration
+	repo         AuthRepository
+	jwtSecret    []byte
+	accessTTL    time.Duration
+	refreshTTL   time.Duration
+	passwordCost int
+
+	// dummyPasswordHash is compared against when the e-mail is unknown, so a
+	// failed login always costs one bcrypt comparison and response time does not
+	// reveal whether an account exists. Computed lazily, once per service.
+	dummyPasswordHash func() []byte
 }
 
 // NewAuthService creates an AuthService using the supplied JWT settings.
 func NewAuthService(repo AuthRepository, jwtSecret []byte, accessTTL, refreshTTL time.Duration) AuthService {
-	return &authService{
-		repo:       repo,
-		jwtSecret:  jwtSecret,
-		accessTTL:  accessTTL,
-		refreshTTL: refreshTTL,
+	s := &authService{
+		repo:         repo,
+		jwtSecret:    jwtSecret,
+		accessTTL:    accessTTL,
+		refreshTTL:   refreshTTL,
+		passwordCost: defaultPasswordCost,
 	}
+	s.dummyPasswordHash = sync.OnceValue(func() []byte {
+		hash, err := bcrypt.GenerateFromPassword([]byte("we-sync-api-dummy-password"), s.passwordCost)
+		if err != nil {
+			// Only fails for an invalid cost or a password over 72 bytes, both constants here.
+			panic(fmt.Sprintf("authService: generate dummy password hash: %v", err))
+		}
+		return hash
+	})
+	return s
 }
 
 // Register validates and creates a user with a bcrypt password hash.
@@ -69,7 +89,7 @@ func (s *authService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		return nil, recordAuthError(span, err)
 	}
 
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), s.passwordCost)
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register hash password: %w", err))
 	}
@@ -103,7 +123,12 @@ func (s *authService) Login(ctx context.Context, req *LoginRequest) (*TokenRespo
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Login: %w", err))
 	}
-	if user == nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
+	hash := s.dummyPasswordHash()
+	if user != nil {
+		hash = []byte(user.PasswordHash)
+	}
+	passwordErr := bcrypt.CompareHashAndPassword(hash, []byte(req.Password))
+	if user == nil || passwordErr != nil {
 		logInvalidLogin(ctx)
 		return nil, recordAuthError(span, newInvalidCredentialsError())
 	}
@@ -157,12 +182,18 @@ func (s *authService) Refresh(ctx context.Context, req *RefreshRequest) (*TokenR
 	}, nil
 }
 
+// Logout revokes the given refresh token. Unknown or already revoked tokens are
+// treated as success so the endpoint does not reveal token state.
 func (s *authService) Logout(ctx context.Context, req *RefreshRequest) error {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Logout")
+	defer span.End()
+	span.SetAttributes(attribute.String("auth.method", "logout"))
+
 	if req == nil || req.RefreshToken == "" {
-		return apperrors.NewValidationError("refresh_token is required")
+		return recordAuthError(span, apperrors.NewValidationError("refresh_token is required"))
 	}
 	if err := s.repo.RevokeRefreshToken(ctx, sha256Hex(req.RefreshToken)); err != nil {
-		return fmt.Errorf("authService.Logout: %w", err)
+		return recordAuthError(span, fmt.Errorf("authService.Logout: %w", err))
 	}
 	return nil
 }
@@ -232,15 +263,28 @@ func sha256Hex(value string) string {
 
 type invalidCredentialsError struct{}
 
-func (invalidCredentialsError) Error() string { return "credenciais inválidas" }
+func (invalidCredentialsError) Error() string { return "invalid credentials" }
 func (invalidCredentialsError) Unwrap() error { return apperrors.ErrUnauthorized }
 
 func newInvalidCredentialsError() error { return invalidCredentialsError{} }
 
+// recordAuthError marks the span as failed. Expected client errors (validation,
+// invalid credentials, conflict, ...) only set the span status; unexpected errors
+// are also recorded as span events, following the convention of the other services.
 func recordAuthError(span trace.Span, err error) error {
-	span.RecordError(err)
+	if !isClientError(err) {
+		span.RecordError(err)
+	}
 	span.SetStatus(codes.Error, err.Error())
 	return err
+}
+
+func isClientError(err error) bool {
+	return errors.Is(err, apperrors.ErrValidation) ||
+		errors.Is(err, apperrors.ErrUnauthorized) ||
+		errors.Is(err, apperrors.ErrForbidden) ||
+		errors.Is(err, apperrors.ErrNotFound) ||
+		errors.Is(err, apperrors.ErrConflict)
 }
 
 func logInvalidLogin(ctx context.Context) {

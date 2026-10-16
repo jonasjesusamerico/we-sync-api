@@ -1,6 +1,6 @@
 // @title          we-sync API
 // @version        1.0
-// @description    API de gerenciamento financeiro — lançamentos de contas mensais.
+// @description    Personal finance API — monthly purchase entries.
 //
 // @host           localhost:8080
 // @BasePath       /api/v1
@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -31,15 +32,15 @@ import (
 )
 
 func main() {
-	slog.Info("Iniciando a aplicação...")
+	slog.Info("Starting application")
 
 	// Configs
 	properties, err := configs.LoadProperties()
 	if err != nil {
-		slog.Error("Erro ao carregar configurações", "error", err)
+		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Configurações carregadas com sucesso")
+	slog.Info("Configuration loaded")
 
 	// Telemetry — must be initialised before any instrumented code runs.
 	// The background context is intentional: OTel bootstrap uses it only
@@ -52,23 +53,23 @@ func main() {
 		PrometheusPort: properties.Telemetry.PrometheusPort,
 	})
 	if err != nil {
-		slog.Error("Erro ao inicializar telemetria", "error", err)
+		slog.Error("Failed to initialize telemetry", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Telemetria inicializada",
+	slog.Info("Telemetry initialized",
 		"service", properties.Telemetry.ServiceName,
 		"otlp_endpoint", properties.Telemetry.OTLPEndpoint,
 		"prometheus_port", properties.Telemetry.PrometheusPort,
 	)
 
 	// DB
-	slog.Info("Conectando ao banco de dados...")
+	slog.Info("Connecting to database")
 	db, err := configs.NewConnection(properties)
 	if err != nil {
-		slog.Error("Erro ao conectar ao banco", "error", err)
+		slog.Error("Failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Conexão com banco estabelecida")
+	slog.Info("Database connection established")
 
 	// Purchase entries
 	purchaseRepo := purchase.NewPurchaseRepository(db)
@@ -96,6 +97,12 @@ func main() {
 
 	server := &http.Server{
 		Addr: ":" + properties.Server.Port,
+		// Timeouts protect against slow clients (e.g. slowloris) holding
+		// connections open. WriteTimeout matches nginx proxy_read_timeout.
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 		Handler: router.New(
 			handlers,
 			logger.New(properties.Logger),
@@ -107,49 +114,49 @@ func main() {
 		),
 	}
 
-	// Canal para capturar sinais do SO
+	// Channel that receives OS shutdown signals.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	// Rodar servidor em goroutine
+	// Run the server in a goroutine.
 	go func() {
-		slog.Info("Servidor HTTP rodando", "port", properties.Server.Port)
+		slog.Info("HTTP server listening", "port", properties.Server.Port)
 
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Erro no servidor HTTP", "error", err)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("HTTP server error", "error", err)
 			os.Exit(1)
 		}
 	}()
 
-	// Espera sinal de shutdown
+	// Wait for a shutdown signal.
 	<-stop
-	slog.Info("Shutdown iniciado...")
+	slog.Info("Shutdown started")
 
-	// Context com timeout para shutdown — dá tempo às requests em voo terminarem.
+	// Shutdown context with timeout — gives in-flight requests time to finish.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 1. Para de aceitar novas conexões e aguarda as em voo.
+	// 1. Stop accepting new connections and wait for in-flight ones.
 	if err := server.Shutdown(ctx); err != nil {
-		slog.Error("Erro ao desligar servidor", "error", err)
+		slog.Error("Failed to shut down server", "error", err)
 	} else {
-		slog.Info("Servidor desligado com sucesso")
+		slog.Info("Server shut down")
 	}
 
-	// 2. Flush de traces e métricas pendentes.
+	// 2. Flush pending traces and metrics.
 	if err := telShutdown(ctx); err != nil {
-		slog.Error("Erro ao fechar telemetria", "error", err)
+		slog.Error("Failed to shut down telemetry", "error", err)
 	} else {
-		slog.Info("Telemetria encerrada com sucesso")
+		slog.Info("Telemetry shut down")
 	}
 
-	// 3. Fecha conexões com o banco após garantir que nenhuma query está em voo.
+	// 3. Close database pools once no query is in flight.
 	if err := db.Write.Close(); err != nil {
-		slog.Error("Erro ao fechar DB Write", "error", err)
+		slog.Error("Failed to close write DB", "error", err)
 	}
 	if err := db.Read.Close(); err != nil {
-		slog.Error("Erro ao fechar DB Read", "error", err)
+		slog.Error("Failed to close read DB", "error", err)
 	}
 
-	slog.Info("Aplicação finalizada")
+	slog.Info("Application stopped")
 }

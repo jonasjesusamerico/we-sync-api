@@ -235,12 +235,25 @@ func (r *authPostgresRepository) RotateRefreshToken(ctx context.Context, oldID, 
 	return nil
 }
 
+// RevokeRefreshToken marks a refresh token as revoked using the write database.
 func (r *authPostgresRepository) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
 	const query = `UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1 AND revoked = FALSE`
+
+	ctx, span := otel.Tracer(authRepoTracerName).Start(ctx, "db.refresh_tokens.revoke")
+	defer span.End()
+	span.SetAttributes(authDBAttrs("UPDATE", "refresh_tokens")...)
+
 	ctx, cancel := context.WithTimeout(ctx, authDBTimeout)
 	defer cancel()
-	if _, err := r.db.Write.ExecContext(ctx, query, tokenHash); err != nil {
+
+	result, err := r.db.Write.ExecContext(ctx, query, tokenHash)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("authPostgresRepository.RevokeRefreshToken: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err == nil {
+		span.SetAttributes(attribute.Int64("db.response.returned_rows", rows))
 	}
 	return nil
 }

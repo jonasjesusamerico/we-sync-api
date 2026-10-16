@@ -20,12 +20,12 @@ func TestLoadProperties_JWTSecret(t *testing.T) {
 		{
 			name:      "too short",
 			secret:    "too-short",
-			wantError: "pelo menos 32 bytes",
+			wantError: "at least 32 bytes",
 		},
 		{
 			name:      "insecure development default",
 			secret:    "local-development-jwt-secret-change-before-production-2026",
-			wantError: "segredo de desenvolvimento padrão",
+			wantError: "default development secret",
 		},
 		{
 			name:   "valid",

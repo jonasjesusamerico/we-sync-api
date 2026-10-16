@@ -113,7 +113,7 @@ func (r *categoryPostgresRepository) GetByID(ctx context.Context, id int64) (*Ca
 		&c.CreatedAt,
 		&c.UpdatedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
 		return nil, nil
 	}
@@ -238,7 +238,7 @@ func (r *categoryPostgresRepository) Update(ctx context.Context, userID, id int6
 		&c.CreatedAt,
 		&c.UpdatedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
 		return nil, nil
 	}

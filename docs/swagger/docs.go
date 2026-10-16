@@ -530,7 +530,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Creates a new monthly account entry (lançamento).",
+                "description": "Creates a new monthly purchase entry.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1013,7 +1013,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{"http", "https"},
 	Title:            "we-sync API",
-	Description:      "API de gerenciamento financeiro — lançamentos de contas mensais.",
+	Description:      "Personal finance API — monthly purchase entries.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

@@ -5,7 +5,7 @@
     ],
     "swagger": "2.0",
     "info": {
-        "description": "API de gerenciamento financeiro — lançamentos de contas mensais.",
+        "description": "Personal finance API — monthly purchase entries.",
         "title": "we-sync API",
         "contact": {
             "name": "Jonas Jesus Americo",
@@ -528,7 +528,7 @@
                 }
             },
             "post": {
-                "description": "Creates a new monthly account entry (lançamento).",
+                "description": "Creates a new monthly purchase entry.",
                 "consumes": [
                     "application/json"
                 ],
