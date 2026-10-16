@@ -8,6 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 	"pgregory.net/rapid"
 )
 
@@ -60,7 +61,7 @@ func TestJWTInjectsUserID(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+raw)
 	recorder := httptest.NewRecorder()
 	JWT([]byte(jwtTestSecret))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := auth.UserIDFromContext(r.Context())
+		id, ok := identity.UserIDFromContext(r.Context())
 		if !ok || id != 42 {
 			t.Fatalf("context user ID = %d, %t", id, ok)
 		}

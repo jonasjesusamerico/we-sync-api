@@ -46,7 +46,7 @@ func decodeAPIError(t *testing.T, recorder *httptest.ResponseRecorder) httputil.
 }
 
 func TestAuthHandler_RegisterSuccess(t *testing.T) {
-	handler := NewAuthHandler(&mockAuthService{
+	handler := NewHandler(&mockAuthService{
 		registerFn: func(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 			return &RegisterResponse{ID: 1, Email: "user@example.com"}, nil
 		},
@@ -60,7 +60,7 @@ func TestAuthHandler_RegisterSuccess(t *testing.T) {
 }
 
 func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
-	handler := NewAuthHandler(&mockAuthService{
+	handler := NewHandler(&mockAuthService{
 		loginFn: func(context.Context, *LoginRequest) (*TokenResponse, error) {
 			return nil, errors.Join(apperrors.ErrUnauthorized, errors.New("invalid credentials"))
 		},
@@ -78,7 +78,7 @@ func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
 }
 
 func TestAuthHandlerRefreshMissingToken(t *testing.T) {
-	handler := NewAuthHandler(&mockAuthService{})
+	handler := NewHandler(&mockAuthService{})
 	request := httptest.NewRequest(http.MethodPost, "/auth/refresh", strings.NewReader(`{}`))
 	recorder := httptest.NewRecorder()
 	handler.Refresh(recorder, request)
@@ -120,7 +120,7 @@ func TestAuthHandler_Register_Errors(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			handler := NewAuthHandler(&mockAuthService{
+			handler := NewHandler(&mockAuthService{
 				registerFn: func(context.Context, *RegisterRequest) (*RegisterResponse, error) { return nil, tc.err },
 			})
 			response := assertAPIError(t, serve(handler.Register, tc.body), tc.status, tc.code)
@@ -132,7 +132,7 @@ func TestAuthHandler_Register_Errors(t *testing.T) {
 }
 
 func TestAuthHandler_Register_SuccessBody(t *testing.T) {
-	handler := NewAuthHandler(&mockAuthService{
+	handler := NewHandler(&mockAuthService{
 		registerFn: func(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 			return &RegisterResponse{ID: 42, Email: "user@example.com"}, nil
 		},
@@ -148,7 +148,7 @@ func TestAuthHandler_Register_SuccessBody(t *testing.T) {
 }
 
 func TestAuthHandler_Login_Success(t *testing.T) {
-	handler := NewAuthHandler(&mockAuthService{
+	handler := NewHandler(&mockAuthService{
 		loginFn: func(_ context.Context, req *LoginRequest) (*TokenResponse, error) {
 			if req.Email != "user@example.com" || req.Password != "password123" {
 				t.Fatalf("unexpected request %+v", req)
@@ -178,7 +178,7 @@ func TestAuthHandler_Login_InputErrors(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			handler := NewAuthHandler(&mockAuthService{
+			handler := NewHandler(&mockAuthService{
 				loginFn: func(context.Context, *LoginRequest) (*TokenResponse, error) {
 					t.Fatal("service must not be called")
 					return nil, nil
@@ -190,7 +190,7 @@ func TestAuthHandler_Login_InputErrors(t *testing.T) {
 }
 
 func TestAuthHandler_Login_InvalidCredentialsMessage(t *testing.T) {
-	handler := NewAuthHandler(&mockAuthService{
+	handler := NewHandler(&mockAuthService{
 		loginFn: func(context.Context, *LoginRequest) (*TokenResponse, error) {
 			return nil, newInvalidCredentialsError()
 		},
@@ -203,7 +203,7 @@ func TestAuthHandler_Login_InvalidCredentialsMessage(t *testing.T) {
 }
 
 func TestAuthHandler_Refresh_Success(t *testing.T) {
-	handler := NewAuthHandler(&mockAuthService{
+	handler := NewHandler(&mockAuthService{
 		refreshFn: func(_ context.Context, req *RefreshRequest) (*TokenResponse, error) {
 			if req.RefreshToken != "old" {
 				t.Fatalf("refresh token = %q", req.RefreshToken)
@@ -234,7 +234,7 @@ func TestAuthHandler_Refresh_Errors(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			handler := NewAuthHandler(&mockAuthService{
+			handler := NewHandler(&mockAuthService{
 				refreshFn: func(context.Context, *RefreshRequest) (*TokenResponse, error) { return nil, tc.err },
 			})
 			assertAPIError(t, serve(handler.Refresh, tc.body), tc.status, tc.code)
@@ -244,7 +244,7 @@ func TestAuthHandler_Refresh_Errors(t *testing.T) {
 
 func TestAuthHandler_Logout_Success(t *testing.T) {
 	var received string
-	handler := NewAuthHandler(&mockAuthService{
+	handler := NewHandler(&mockAuthService{
 		logoutFn: func(_ context.Context, req *RefreshRequest) error {
 			received = req.RefreshToken
 			return nil
@@ -269,7 +269,7 @@ func TestAuthHandler_Logout_Errors(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			handler := NewAuthHandler(&mockAuthService{
+			handler := NewHandler(&mockAuthService{
 				logoutFn: func(context.Context, *RefreshRequest) error { return tc.err },
 			})
 			assertAPIError(t, serve(handler.Logout, tc.body), tc.status, tc.code)

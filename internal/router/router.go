@@ -12,7 +12,6 @@ import (
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
-	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/middleware"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -25,10 +24,9 @@ const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 // Handlers groups all domain handlers injected into the router.
 type Handlers struct {
-	Health   *handler.HealthHandler
-	Auth     *auth.AuthHandler
-	Purchase *purchase.PurchaseHandler
-	Category *category.CategoryHandler
+	Auth     *auth.Handler
+	Purchase *purchase.Handler
+	Category *category.Handler
 }
 
 // New builds and returns the root HTTP handler.
@@ -64,7 +62,7 @@ func New(
 	}
 
 	r.Route("/", func(r chi.Router) {
-		r.Get("/health-check", h.Health.Check)
+		r.Get("/health-check", healthCheck)
 	})
 
 	r.Route("/api", func(r chi.Router) {

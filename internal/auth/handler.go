@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,12 +11,21 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
-type AuthHandler struct {
-	svc AuthService
+// service is the behaviour of *Service the handler depends on. It is declared
+// here, at the consumer, so handler tests can substitute a fake.
+type service interface {
+	Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error)
+	Login(ctx context.Context, req *LoginRequest) (*TokenResponse, error)
+	Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error)
+	Logout(ctx context.Context, req *RefreshRequest) error
 }
 
-func NewAuthHandler(svc AuthService) *AuthHandler {
-	return &AuthHandler{svc: svc}
+type Handler struct {
+	svc service
+}
+
+func NewHandler(svc service) *Handler {
+	return &Handler{svc: svc}
 }
 
 // Register creates a new user.
@@ -29,7 +39,7 @@ func NewAuthHandler(svc AuthService) *AuthHandler {
 // @Failure 409 {object} httputil.APIError
 // @Failure 422 {object} httputil.APIError
 // @Router /auth/register [post]
-func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteBadRequest(w, "invalid request body")
@@ -55,7 +65,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 // @Failure 401 {object} httputil.APIError
 // @Failure 422 {object} httputil.APIError
 // @Router /auth/login [post]
-func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteBadRequest(w, "invalid request body")
@@ -84,7 +94,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} httputil.APIError
 // @Failure 401 {object} httputil.APIError
 // @Router /auth/refresh [post]
-func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteBadRequest(w, "invalid request body")
@@ -113,7 +123,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 // @Success 204
 // @Failure 400 {object} httputil.APIError
 // @Router /auth/logout [post]
-func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteBadRequest(w, "invalid request body")
@@ -126,7 +136,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AuthHandler) handleError(w http.ResponseWriter, r *http.Request, err error) {
+func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, apperrors.ErrValidation):
 		httputil.WriteValidationError(w, err.Error())

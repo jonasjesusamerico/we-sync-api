@@ -2,14 +2,14 @@ package category
 
 import "context"
 
-// CategoryRepository is the outbound port for category persistence.
+// Repository is the outbound port for category persistence.
 //
 // Contracts:
 //   - GetByID returns (nil, nil) when the category does not exist.
 //   - Update returns (nil, nil) when no row with the given ID and userID exists.
 //   - Delete returns (false, nil) when no row with the given ID and userID exists.
 //   - Create returns apperrors.ErrConflict on name uniqueness violation.
-type CategoryRepository interface {
+type Repository interface {
 	// Create inserts a new personal category owned by userID.
 	Create(ctx context.Context, userID int64, req *CreateCategoryRequest) (*Category, error)
 

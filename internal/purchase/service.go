@@ -10,26 +10,25 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
-	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 	"github.com/shopspring/decimal"
 )
 
 const tracerName = "we-sync-api/purchase"
 const meterName = "we-sync-api/purchase"
 
-// PurchaseService defines the inbound port (business logic) for purchase entries.
-type PurchaseService interface {
-	Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error)
-	GetByID(ctx context.Context, id int64) (*Purchase, error)
-	List(ctx context.Context, filter ListFilter) (*PaginatedResult, error)
-	Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
-	Delete(ctx context.Context, id int64) error
+// categoryLookup is the only behaviour the purchase service needs from the
+// category domain. Declaring it here, at the consumer, keeps the dependency
+// minimal: *category.PostgresRepository satisfies it implicitly.
+type categoryLookup interface {
+	GetByID(ctx context.Context, id int64) (*category.Category, error)
 }
 
-type purchaseService struct {
-	repo         PurchaseRepository
-	categoryRepo category.CategoryRepository
+// Service implements the purchase-entry business rules.
+type Service struct {
+	repo       Repository
+	categories categoryLookup
 
 	// Business metrics — recorded after each successful mutation.
 	purchasesCreated metric.Int64Counter
@@ -37,9 +36,9 @@ type purchaseService struct {
 	purchasesDeleted metric.Int64Counter
 }
 
-// NewPurchaseService creates a new PurchaseService backed by the given repositories.
-// categoryRepo is used to validate that a category_id is accessible to the user.
-func NewPurchaseService(repo PurchaseRepository, categoryRepo category.CategoryRepository) PurchaseService {
+// NewService creates a new Service backed by the given repositories.
+// categories is used to validate that a category_id is accessible to the user.
+func NewService(repo Repository, categories categoryLookup) *Service {
 	meter := otel.Meter(meterName)
 
 	purchasesCreated, _ := meter.Int64Counter(
@@ -58,9 +57,9 @@ func NewPurchaseService(repo PurchaseRepository, categoryRepo category.CategoryR
 		metric.WithUnit("{purchase}"),
 	)
 
-	return &purchaseService{
+	return &Service{
 		repo:             repo,
-		categoryRepo:     categoryRepo,
+		categories:       categories,
 		purchasesCreated: purchasesCreated,
 		purchasesUpdated: purchasesUpdated,
 		purchasesDeleted: purchasesDeleted,
@@ -68,11 +67,11 @@ func NewPurchaseService(repo PurchaseRepository, categoryRepo category.CategoryR
 }
 
 // Create validates and persists a new purchase entry.
-func (s *purchaseService) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error) {
+func (s *Service) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Create")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
@@ -113,11 +112,11 @@ func (s *purchaseService) Create(ctx context.Context, req *CreatePurchaseRequest
 
 // GetByID returns the purchase entry with the given ID.
 // Returns apperrors.ErrNotFound if no record exists.
-func (s *purchaseService) GetByID(ctx context.Context, id int64) (*Purchase, error) {
+func (s *Service) GetByID(ctx context.Context, id int64) (*Purchase, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.GetByID")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
@@ -138,11 +137,11 @@ func (s *purchaseService) GetByID(ctx context.Context, id int64) (*Purchase, err
 }
 
 // List returns a paginated and filtered list of purchase entries.
-func (s *purchaseService) List(ctx context.Context, filter ListFilter) (*PaginatedResult, error) {
+func (s *Service) List(ctx context.Context, filter ListFilter) (*PaginatedResult, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.List")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
@@ -182,11 +181,11 @@ func (s *purchaseService) List(ctx context.Context, filter ListFilter) (*Paginat
 
 // Update validates and applies changes to an existing purchase entry.
 // Returns apperrors.ErrNotFound if no record with the given ID exists.
-func (s *purchaseService) Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
+func (s *Service) Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Update")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
@@ -232,11 +231,11 @@ func (s *purchaseService) Update(ctx context.Context, id int64, req *UpdatePurch
 
 // Delete removes the purchase entry with the given ID.
 // Returns apperrors.ErrNotFound if no record exists.
-func (s *purchaseService) Delete(ctx context.Context, id int64) error {
+func (s *Service) Delete(ctx context.Context, id int64) error {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Delete")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return apperrors.ErrUnauthorized
 	}
@@ -296,8 +295,8 @@ func validateRequest(req *PurchaseRequest) error {
 // validateCategoryAccess ensures the category exists and is accessible by userID.
 // Returns category.ErrCategoryNotFound when the category does not exist or belongs to
 // another user, so existence of other users' categories is never leaked.
-func (s *purchaseService) validateCategoryAccess(ctx context.Context, categoryID, userID int64) error {
-	cat, err := s.categoryRepo.GetByID(ctx, categoryID)
+func (s *Service) validateCategoryAccess(ctx context.Context, categoryID, userID int64) error {
+	cat, err := s.categories.GetByID(ctx, categoryID)
 	if err != nil {
 		return fmt.Errorf("purchaseService.validateCategoryAccess: %w", err)
 	}

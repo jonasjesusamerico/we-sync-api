@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
-	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ func personalCategory(id, userID int64, name string) *Category {
 }
 
 func ctxWithUser(userID int64) context.Context {
-	return auth.WithUserID(context.Background(), userID)
+	return identity.WithUserID(context.Background(), userID)
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ func ctxWithUser(userID int64) context.Context {
 
 func TestService_Create_Success(t *testing.T) {
 	want := personalCategory(1, 42, "Gasolina")
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		CreateFn: func(_ context.Context, userID int64, req *CreateCategoryRequest) (*Category, error) {
 			return want, nil
 		},
@@ -51,7 +51,7 @@ func TestService_Create_Success(t *testing.T) {
 }
 
 func TestService_Create_NoUserID(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{})
+	svc := NewService(&mockCategoryRepository{})
 	_, err := svc.Create(context.Background(), &CreateCategoryRequest{Name: "X"})
 	if !errors.Is(err, apperrors.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
@@ -59,7 +59,7 @@ func TestService_Create_NoUserID(t *testing.T) {
 }
 
 func TestService_Create_EmptyName(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{})
+	svc := NewService(&mockCategoryRepository{})
 	_, err := svc.Create(ctxWithUser(1), &CreateCategoryRequest{Name: "   "})
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -67,7 +67,7 @@ func TestService_Create_EmptyName(t *testing.T) {
 }
 
 func TestService_Create_NilRequest(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{})
+	svc := NewService(&mockCategoryRepository{})
 	_, err := svc.Create(ctxWithUser(1), nil)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -75,7 +75,7 @@ func TestService_Create_NilRequest(t *testing.T) {
 }
 
 func TestService_Create_CollidesWithGlobal(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		ExistsGlobalByNameFn: func(_ context.Context, name string) (bool, error) {
 			return strings.EqualFold(name, "Alimentação"), nil
 		},
@@ -87,7 +87,7 @@ func TestService_Create_CollidesWithGlobal(t *testing.T) {
 }
 
 func TestService_Create_ConflictFromRepository(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		CreateFn: func(_ context.Context, _ int64, _ *CreateCategoryRequest) (*Category, error) {
 			return nil, apperrors.ErrConflict
 		},
@@ -100,7 +100,7 @@ func TestService_Create_ConflictFromRepository(t *testing.T) {
 
 func TestService_Create_RepositoryError(t *testing.T) {
 	repoErr := errors.New("db failure")
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		CreateFn: func(_ context.Context, _ int64, _ *CreateCategoryRequest) (*Category, error) {
 			return nil, repoErr
 		},
@@ -120,7 +120,7 @@ func TestService_List_Success(t *testing.T) {
 		*globalCategory(1, "Alimentação"),
 		*personalCategory(7, 42, "Gasolina"),
 	}
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		ListForUserFn: func(_ context.Context, userID int64) ([]Category, error) {
 			if userID != 42 {
 				t.Errorf("expected userID 42, got %d", userID)
@@ -139,7 +139,7 @@ func TestService_List_Success(t *testing.T) {
 }
 
 func TestService_List_NoUserID(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{})
+	svc := NewService(&mockCategoryRepository{})
 	_, err := svc.List(context.Background())
 	if !errors.Is(err, apperrors.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
@@ -148,7 +148,7 @@ func TestService_List_NoUserID(t *testing.T) {
 
 func TestService_List_RepositoryError(t *testing.T) {
 	repoErr := errors.New("connection lost")
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		ListForUserFn: func(_ context.Context, _ int64) ([]Category, error) {
 			return nil, repoErr
 		},
@@ -166,7 +166,7 @@ func TestService_List_RepositoryError(t *testing.T) {
 func TestService_Update_Success(t *testing.T) {
 	original := personalCategory(5, 42, "Antigo")
 	updated := personalCategory(5, 42, "Novo")
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return original, nil
 		},
@@ -185,7 +185,7 @@ func TestService_Update_Success(t *testing.T) {
 }
 
 func TestService_Update_NoUserID(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{})
+	svc := NewService(&mockCategoryRepository{})
 	_, err := svc.Update(context.Background(), 1, &UpdateCategoryRequest{Name: "X"})
 	if !errors.Is(err, apperrors.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
@@ -193,7 +193,7 @@ func TestService_Update_NoUserID(t *testing.T) {
 }
 
 func TestService_Update_EmptyName(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{})
+	svc := NewService(&mockCategoryRepository{})
 	_, err := svc.Update(ctxWithUser(1), 1, &UpdateCategoryRequest{Name: ""})
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -201,7 +201,7 @@ func TestService_Update_EmptyName(t *testing.T) {
 }
 
 func TestService_Update_NotFound(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, _ int64) (*Category, error) { return nil, nil },
 	})
 	_, err := svc.Update(ctxWithUser(1), 99, &UpdateCategoryRequest{Name: "X"})
@@ -211,7 +211,7 @@ func TestService_Update_NotFound(t *testing.T) {
 }
 
 func TestService_Update_GlobalCategoryForbidden(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return globalCategory(id, "Alimentação"), nil
 		},
@@ -223,7 +223,7 @@ func TestService_Update_GlobalCategoryForbidden(t *testing.T) {
 }
 
 func TestService_Update_OtherUserCategory(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return personalCategory(id, 99, "Alheia"), nil // belongs to user 99
 		},
@@ -235,7 +235,7 @@ func TestService_Update_OtherUserCategory(t *testing.T) {
 }
 
 func TestService_Update_CollidesWithGlobal(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return personalCategory(id, 42, "Minha"), nil
 		},
@@ -250,7 +250,7 @@ func TestService_Update_CollidesWithGlobal(t *testing.T) {
 }
 
 func TestService_Update_ConflictFromRepository(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return personalCategory(id, 42, "Original"), nil
 		},
@@ -269,7 +269,7 @@ func TestService_Update_ConflictFromRepository(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestService_Delete_Success(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return personalCategory(id, 42, "Gasolina"), nil
 		},
@@ -281,14 +281,14 @@ func TestService_Delete_Success(t *testing.T) {
 }
 
 func TestService_Delete_NoUserID(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{})
+	svc := NewService(&mockCategoryRepository{})
 	if err := svc.Delete(context.Background(), 1); !errors.Is(err, apperrors.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
 }
 
 func TestService_Delete_NotFound(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, _ int64) (*Category, error) { return nil, nil },
 	})
 	if err := svc.Delete(ctxWithUser(1), 99); !errors.Is(err, apperrors.ErrNotFound) {
@@ -297,7 +297,7 @@ func TestService_Delete_NotFound(t *testing.T) {
 }
 
 func TestService_Delete_GlobalCategoryForbidden(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return globalCategory(id, "Saúde"), nil
 		},
@@ -308,7 +308,7 @@ func TestService_Delete_GlobalCategoryForbidden(t *testing.T) {
 }
 
 func TestService_Delete_OtherUserCategory(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return personalCategory(id, 99, "Alheia"), nil
 		},
@@ -319,7 +319,7 @@ func TestService_Delete_OtherUserCategory(t *testing.T) {
 }
 
 func TestService_Delete_ConflictInUse(t *testing.T) {
-	svc := NewCategoryService(&mockCategoryRepository{
+	svc := NewService(&mockCategoryRepository{
 		GetByIDFn: func(_ context.Context, id int64) (*Category, error) {
 			return personalCategory(id, 42, "Em uso"), nil
 		},

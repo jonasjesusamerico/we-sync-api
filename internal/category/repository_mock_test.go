@@ -2,7 +2,7 @@ package category
 
 import "context"
 
-// mockCategoryRepository is a test double for CategoryRepository.
+// mockCategoryRepository is a test double for Repository.
 // Each method falls back gracefully when its Fn field is nil (nil-check pattern).
 type mockCategoryRepository struct {
 	CreateFn             func(ctx context.Context, userID int64, req *CreateCategoryRequest) (*Category, error)

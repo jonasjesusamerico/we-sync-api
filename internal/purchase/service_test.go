@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
-	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 	"github.com/shopspring/decimal"
 	"pgregory.net/rapid"
 )
@@ -17,8 +17,8 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-func globalCatRepo() *mockCategoryRepository {
-	return &mockCategoryRepository{
+func globalCatRepo() *mockCategoryLookup {
+	return &mockCategoryLookup{
 		GetByIDFn: func(_ context.Context, id int64) (*category.Category, error) {
 			return &category.Category{ID: id, UserID: nil, Name: "Alimentação", IsGlobal: true}, nil
 		},
@@ -61,8 +61,8 @@ func purchaseFromCreate(req *CreatePurchaseRequest) *Purchase {
 	}
 }
 
-func newSvc(repo PurchaseRepository, catRepo *mockCategoryRepository) PurchaseService {
-	return NewPurchaseService(repo, catRepo)
+func newSvc(repo Repository, catRepo *mockCategoryLookup) *Service {
+	return NewService(repo, catRepo)
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ func TestService_UserIDAlwaysComesFromContext(t *testing.T) {
 			},
 		}
 		svc := newSvc(repo, globalCatRepo())
-		_, err := svc.List(auth.WithUserID(context.Background(), userID), ListFilter{UserID: userID + 1})
+		_, err := svc.List(identity.WithUserID(context.Background(), userID), ListFilter{UserID: userID + 1})
 		if err != nil {
 			t.Fatalf("List() error = %v", err)
 		}
@@ -149,7 +149,7 @@ func TestService_Create_Success(t *testing.T) {
 		},
 	}, globalCatRepo())
 
-	got, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	got, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestService_Create_MissingPurchaseDate(t *testing.T) {
 	req := validCreateRequest()
 	req.PurchaseDate = Date{}
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -172,7 +172,7 @@ func TestService_Create_MissingDescription(t *testing.T) {
 	req := validCreateRequest()
 	req.Description = ""
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -182,7 +182,7 @@ func TestService_Create_MissingCategoryID(t *testing.T) {
 	req := validCreateRequest()
 	req.CategoryID = 0
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation for zero category_id, got %v", err)
 	}
@@ -190,11 +190,11 @@ func TestService_Create_MissingCategoryID(t *testing.T) {
 
 func TestService_Create_CategoryNotFound(t *testing.T) {
 	req := validCreateRequest()
-	catRepo := &mockCategoryRepository{
+	catRepo := &mockCategoryLookup{
 		GetByIDFn: func(_ context.Context, _ int64) (*category.Category, error) { return nil, nil },
 	}
 	svc := newSvc(&mockPurchaseRepository{}, catRepo)
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, category.ErrCategoryNotFound) {
 		t.Errorf("expected ErrNotFound for missing category, got %v", err)
 	}
@@ -203,14 +203,14 @@ func TestService_Create_CategoryNotFound(t *testing.T) {
 func TestService_Create_CategoryBelongsToAnotherUser(t *testing.T) {
 	req := validCreateRequest()
 	otherUser := int64(99)
-	catRepo := &mockCategoryRepository{
+	catRepo := &mockCategoryLookup{
 		GetByIDFn: func(_ context.Context, id int64) (*category.Category, error) {
 			return &category.Category{ID: id, UserID: &otherUser, IsGlobal: false}, nil
 		},
 	}
 	svc := newSvc(&mockPurchaseRepository{}, catRepo)
 	// user 1 tries to use category owned by user 99
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, category.ErrCategoryNotFound) {
 		t.Errorf("expected ErrNotFound (no info leak), got %v", err)
 	}
@@ -220,7 +220,7 @@ func TestService_Create_InvalidPaymentMethod(t *testing.T) {
 	req := validCreateRequest()
 	req.PaymentMethod = "BITCOIN"
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -230,7 +230,7 @@ func TestService_Create_AmountZero(t *testing.T) {
 	req := validCreateRequest()
 	req.Amount = decimal.Zero
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -240,7 +240,7 @@ func TestService_Create_AmountNegative(t *testing.T) {
 	req := validCreateRequest()
 	req.Amount = decimal.NewFromFloat(-10)
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -250,7 +250,7 @@ func TestService_Create_InvalidStatus(t *testing.T) {
 	req := validCreateRequest()
 	req.Status = "UNKNOWN"
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
@@ -263,7 +263,7 @@ func TestService_Create_RepositoryError(t *testing.T) {
 			return nil, repoErr
 		},
 	}, globalCatRepo())
-	_, err := svc.Create(auth.WithUserID(context.Background(), 1), validCreateRequest())
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), validCreateRequest())
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}
@@ -278,7 +278,7 @@ func TestService_GetByID_Found(t *testing.T) {
 	svc := newSvc(&mockPurchaseRepository{
 		GetByIDFn: func(_ context.Context, _ int64, id int64) (*Purchase, error) { return want, nil },
 	}, globalCatRepo())
-	got, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 42)
+	got, err := svc.GetByID(identity.WithUserID(context.Background(), 1), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestService_GetByID_NotFound(t *testing.T) {
 	svc := newSvc(&mockPurchaseRepository{
 		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) { return nil, nil },
 	}, globalCatRepo())
-	_, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 99)
+	_, err := svc.GetByID(identity.WithUserID(context.Background(), 1), 99)
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -302,7 +302,7 @@ func TestService_GetByID_RepositoryError(t *testing.T) {
 	svc := newSvc(&mockPurchaseRepository{
 		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) { return nil, repoErr },
 	}, globalCatRepo())
-	_, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 1)
+	_, err := svc.GetByID(identity.WithUserID(context.Background(), 1), 1)
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}
@@ -320,7 +320,7 @@ func TestService_List_DefaultPagination(t *testing.T) {
 			return &PaginatedResult{Items: []Purchase{}, Total: 0, Page: f.Page, PageSize: f.PageSize}, nil
 		},
 	}, globalCatRepo())
-	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{})
+	_, err := svc.List(identity.WithUserID(context.Background(), 1), ListFilter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestService_List_CustomPagination(t *testing.T) {
 			return &PaginatedResult{Items: []Purchase{}, Total: 0, Page: f.Page, PageSize: f.PageSize}, nil
 		},
 	}, globalCatRepo())
-	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{Page: 3, PageSize: 5})
+	_, err := svc.List(identity.WithUserID(context.Background(), 1), ListFilter{Page: 3, PageSize: 5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestService_List_CustomPagination(t *testing.T) {
 
 func TestService_List_PageSizeExceedsMax(t *testing.T) {
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{PageSize: MaxPageSize + 1})
+	_, err := svc.List(identity.WithUserID(context.Background(), 1), ListFilter{PageSize: MaxPageSize + 1})
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation for page_size > MaxPageSize, got %v", err)
 	}
@@ -372,7 +372,7 @@ func TestService_Update_Success(t *testing.T) {
 			return want, nil
 		},
 	}, globalCatRepo())
-	got, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, req)
+	got, err := svc.Update(identity.WithUserID(context.Background(), 1), 1, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestService_Update_NotFound(t *testing.T) {
 			return nil, nil
 		},
 	}, globalCatRepo())
-	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 99, validUpdateRequest())
+	_, err := svc.Update(identity.WithUserID(context.Background(), 1), 99, validUpdateRequest())
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -397,18 +397,18 @@ func TestService_Update_ValidationError(t *testing.T) {
 	req := validUpdateRequest()
 	req.Amount = decimal.NewFromFloat(-5)
 	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, req)
+	_, err := svc.Update(identity.WithUserID(context.Background(), 1), 1, req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
 }
 
 func TestService_Update_CategoryNotFound(t *testing.T) {
-	catRepo := &mockCategoryRepository{
+	catRepo := &mockCategoryLookup{
 		GetByIDFn: func(_ context.Context, _ int64) (*category.Category, error) { return nil, nil },
 	}
 	svc := newSvc(&mockPurchaseRepository{}, catRepo)
-	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, validUpdateRequest())
+	_, err := svc.Update(identity.WithUserID(context.Background(), 1), 1, validUpdateRequest())
 	if !errors.Is(err, category.ErrCategoryNotFound) {
 		t.Errorf("expected ErrNotFound for missing category, got %v", err)
 	}
@@ -422,7 +422,7 @@ func TestService_Delete_Success(t *testing.T) {
 	svc := newSvc(&mockPurchaseRepository{
 		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) { return true, nil },
 	}, globalCatRepo())
-	if err := svc.Delete(auth.WithUserID(context.Background(), 1), 1); err != nil {
+	if err := svc.Delete(identity.WithUserID(context.Background(), 1), 1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -431,7 +431,7 @@ func TestService_Delete_NotFound(t *testing.T) {
 	svc := newSvc(&mockPurchaseRepository{
 		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) { return false, nil },
 	}, globalCatRepo())
-	err := svc.Delete(auth.WithUserID(context.Background(), 1), 99)
+	err := svc.Delete(identity.WithUserID(context.Background(), 1), 99)
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -442,7 +442,7 @@ func TestService_Delete_RepositoryError(t *testing.T) {
 	svc := newSvc(&mockPurchaseRepository{
 		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) { return false, repoErr },
 	}, globalCatRepo())
-	err := svc.Delete(auth.WithUserID(context.Background(), 1), 1)
+	err := svc.Delete(identity.WithUserID(context.Background(), 1), 1)
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}

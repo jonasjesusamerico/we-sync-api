@@ -84,7 +84,7 @@ func decodeError(t *testing.T, body *bytes.Buffer) httputil.APIError {
 // ---------------------------------------------------------------------------
 
 func TestHandler_Create_Success(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
 			return sampleCategory(), nil
 		},
@@ -109,7 +109,7 @@ func TestHandler_Create_Success(t *testing.T) {
 }
 
 func TestHandler_Create_InvalidJSON(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{})
+	h := NewHandler(&mockCategoryService{})
 
 	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(`{bad}`))
 	rec := httptest.NewRecorder()
@@ -126,7 +126,7 @@ func TestHandler_Create_InvalidJSON(t *testing.T) {
 }
 
 func TestHandler_Create_ValidationError(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
 			return nil, apperrors.NewValidationError("name is required")
 		},
@@ -143,7 +143,7 @@ func TestHandler_Create_ValidationError(t *testing.T) {
 }
 
 func TestHandler_Create_Conflict(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
 			return nil, apperrors.ErrConflict
 		},
@@ -164,7 +164,7 @@ func TestHandler_Create_Conflict(t *testing.T) {
 }
 
 func TestHandler_Create_Unauthorized(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
 			return nil, apperrors.ErrUnauthorized
 		},
@@ -181,7 +181,7 @@ func TestHandler_Create_Unauthorized(t *testing.T) {
 }
 
 func TestHandler_Create_InternalError(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
 			return nil, errors.New("db unavailable")
 		},
@@ -202,7 +202,7 @@ func TestHandler_Create_InternalError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_List_Success(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		ListFn: func(_ context.Context) ([]Category, error) {
 			return []Category{*sampleCategory()}, nil
 		},
@@ -226,7 +226,7 @@ func TestHandler_List_Success(t *testing.T) {
 }
 
 func TestHandler_List_Empty(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		ListFn: func(_ context.Context) ([]Category, error) {
 			return []Category{}, nil
 		},
@@ -243,7 +243,7 @@ func TestHandler_List_Empty(t *testing.T) {
 }
 
 func TestHandler_List_InternalError(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		ListFn: func(_ context.Context) ([]Category, error) {
 			return nil, errors.New("db error")
 		},
@@ -264,7 +264,7 @@ func TestHandler_List_InternalError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_Update_Success(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		UpdateFn: func(_ context.Context, _ int64, _ *UpdateCategoryRequest) (*Category, error) {
 			return sampleCategory(), nil
 		},
@@ -283,7 +283,7 @@ func TestHandler_Update_Success(t *testing.T) {
 }
 
 func TestHandler_Update_InvalidID(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{})
+	h := NewHandler(&mockCategoryService{})
 
 	req := httptest.NewRequest(http.MethodPut, "/categories/abc", strings.NewReader(`{"name":"X"}`))
 	req = withChiID(req, "abc")
@@ -297,7 +297,7 @@ func TestHandler_Update_InvalidID(t *testing.T) {
 }
 
 func TestHandler_Update_NotFound(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		UpdateFn: func(_ context.Context, _ int64, _ *UpdateCategoryRequest) (*Category, error) {
 			return nil, apperrors.ErrNotFound
 		},
@@ -315,7 +315,7 @@ func TestHandler_Update_NotFound(t *testing.T) {
 }
 
 func TestHandler_Update_ForbiddenGlobal(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		UpdateFn: func(_ context.Context, _ int64, _ *UpdateCategoryRequest) (*Category, error) {
 			return nil, apperrors.ErrForbidden
 		},
@@ -337,7 +337,7 @@ func TestHandler_Update_ForbiddenGlobal(t *testing.T) {
 }
 
 func TestHandler_Update_InvalidJSON(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{})
+	h := NewHandler(&mockCategoryService{})
 
 	req := httptest.NewRequest(http.MethodPut, "/categories/1", strings.NewReader(`{bad}`))
 	req = withChiID(req, "1")
@@ -355,7 +355,7 @@ func TestHandler_Update_InvalidJSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_Delete_Success(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		DeleteFn: func(_ context.Context, _ int64) error { return nil },
 	})
 
@@ -371,7 +371,7 @@ func TestHandler_Delete_Success(t *testing.T) {
 }
 
 func TestHandler_Delete_NotFound(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrNotFound },
 	})
 
@@ -387,7 +387,7 @@ func TestHandler_Delete_NotFound(t *testing.T) {
 }
 
 func TestHandler_Delete_ForbiddenGlobal(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrForbidden },
 	})
 
@@ -403,7 +403,7 @@ func TestHandler_Delete_ForbiddenGlobal(t *testing.T) {
 }
 
 func TestHandler_Delete_ConflictInUse(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{
+	h := NewHandler(&mockCategoryService{
 		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrConflict },
 	})
 
@@ -423,7 +423,7 @@ func TestHandler_Delete_ConflictInUse(t *testing.T) {
 }
 
 func TestHandler_Delete_InvalidID(t *testing.T) {
-	h := NewCategoryHandler(&mockCategoryService{})
+	h := NewHandler(&mockCategoryService{})
 
 	req := httptest.NewRequest(http.MethodDelete, "/categories/0", nil)
 	req = withChiID(req, "0")

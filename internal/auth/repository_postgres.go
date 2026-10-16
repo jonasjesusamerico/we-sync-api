@@ -14,7 +14,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
-	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
+	"github.com/jonasjesusamerico/we-sync-api/internal/database"
 )
 
 const (
@@ -24,13 +24,17 @@ const (
 	authRepoTracerName = "we-sync-api/auth/repository"
 )
 
-type authPostgresRepository struct {
-	db *configs.DB
+// PostgresRepository is the PostgreSQL implementation of Repository.
+type PostgresRepository struct {
+	db *database.DB
 }
 
-// NewAuthRepository creates a PostgreSQL-backed AuthRepository.
-func NewAuthRepository(db *configs.DB) AuthRepository {
-	return &authPostgresRepository{db: db}
+// Compile-time check that PostgresRepository satisfies Repository.
+var _ Repository = (*PostgresRepository)(nil)
+
+// NewRepository creates a PostgreSQL-backed Repository.
+func NewRepository(db *database.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
 func authDBAttrs(operation, table string) []attribute.KeyValue {
@@ -43,7 +47,7 @@ func authDBAttrs(operation, table string) []attribute.KeyValue {
 }
 
 // CreateUser inserts a user using the write database.
-func (r *authPostgresRepository) CreateUser(ctx context.Context, email, passwordHash string) (*User, error) {
+func (r *PostgresRepository) CreateUser(ctx context.Context, email, passwordHash string) (*User, error) {
 	const query = `
 		INSERT INTO users (email, password_hash, created_at, updated_at)
 		VALUES ($1, $2, NOW(), NOW())
@@ -82,7 +86,7 @@ func (r *authPostgresRepository) CreateUser(ctx context.Context, email, password
 // needs read-after-write consistency when a user logs in immediately after
 // registration; ordinary read-only queries continue to use the read pool.
 // It returns (nil, nil) when no user exists for the email.
-func (r *authPostgresRepository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+func (r *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	const query = `
 		SELECT id, email, password_hash, created_at, updated_at
 		FROM users
@@ -118,7 +122,7 @@ func (r *authPostgresRepository) GetUserByEmail(ctx context.Context, email strin
 }
 
 // CreateRefreshToken stores a refresh-token hash using the write database.
-func (r *authPostgresRepository) CreateRefreshToken(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error {
+func (r *PostgresRepository) CreateRefreshToken(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error {
 	const query = `
 		INSERT INTO refresh_tokens (user_id, token_hash, expires_at, revoked, created_at)
 		VALUES ($1, $2, $3, FALSE, NOW())`
@@ -140,7 +144,7 @@ func (r *authPostgresRepository) CreateRefreshToken(ctx context.Context, userID 
 
 // GetRefreshToken reads a refresh token from the write database to avoid replica lag.
 // It returns (nil, nil) when the token does not exist.
-func (r *authPostgresRepository) GetRefreshToken(ctx context.Context, tokenHash string) (*RefreshToken, error) {
+func (r *PostgresRepository) GetRefreshToken(ctx context.Context, tokenHash string) (*RefreshToken, error) {
 	const query = `
 		SELECT id, user_id, token_hash, expires_at, revoked, created_at
 		FROM refresh_tokens
@@ -177,7 +181,7 @@ func (r *authPostgresRepository) GetRefreshToken(ctx context.Context, tokenHash 
 }
 
 // RotateRefreshToken revokes the old token and inserts its replacement in one transaction.
-func (r *authPostgresRepository) RotateRefreshToken(ctx context.Context, oldID, userID int64, newTokenHash string, newExpiresAt time.Time) error {
+func (r *PostgresRepository) RotateRefreshToken(ctx context.Context, oldID, userID int64, newTokenHash string, newExpiresAt time.Time) error {
 	const revokeQuery = `
 		UPDATE refresh_tokens
 		SET revoked = TRUE
@@ -236,7 +240,7 @@ func (r *authPostgresRepository) RotateRefreshToken(ctx context.Context, oldID, 
 }
 
 // RevokeRefreshToken marks a refresh token as revoked using the write database.
-func (r *authPostgresRepository) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
+func (r *PostgresRepository) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
 	const query = `UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1 AND revoked = FALSE`
 
 	ctx, span := otel.Tracer(authRepoTracerName).Start(ctx, "db.refresh_tokens.revoke")

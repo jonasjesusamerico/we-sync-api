@@ -32,16 +32,9 @@ const defaultPasswordCost = 12
 
 var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
-// AuthService defines the authentication business operations.
-type AuthService interface {
-	Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error)
-	Login(ctx context.Context, req *LoginRequest) (*TokenResponse, error)
-	Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error)
-	Logout(ctx context.Context, req *RefreshRequest) error
-}
-
-type authService struct {
-	repo         AuthRepository
+// Service implements the authentication business rules.
+type Service struct {
+	repo         Repository
 	jwtSecret    []byte
 	accessTTL    time.Duration
 	refreshTTL   time.Duration
@@ -53,9 +46,9 @@ type authService struct {
 	dummyPasswordHash func() []byte
 }
 
-// NewAuthService creates an AuthService using the supplied JWT settings.
-func NewAuthService(repo AuthRepository, jwtSecret []byte, accessTTL, refreshTTL time.Duration) AuthService {
-	s := &authService{
+// NewService creates a Service using the supplied JWT settings.
+func NewService(repo Repository, jwtSecret []byte, accessTTL, refreshTTL time.Duration) *Service {
+	s := &Service{
 		repo:         repo,
 		jwtSecret:    jwtSecret,
 		accessTTL:    accessTTL,
@@ -74,7 +67,7 @@ func NewAuthService(repo AuthRepository, jwtSecret []byte, accessTTL, refreshTTL
 }
 
 // Register validates and creates a user with a bcrypt password hash.
-func (s *authService) Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error) {
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error) {
 	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Register")
 	defer span.End()
 
@@ -111,7 +104,7 @@ func (s *authService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 }
 
 // Login validates credentials and returns a JWT access token and refresh token.
-func (s *authService) Login(ctx context.Context, req *LoginRequest) (*TokenResponse, error) {
+func (s *Service) Login(ctx context.Context, req *LoginRequest) (*TokenResponse, error) {
 	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Login")
 	defer span.End()
 
@@ -145,7 +138,7 @@ func (s *authService) Login(ctx context.Context, req *LoginRequest) (*TokenRespo
 }
 
 // Refresh rotates a valid refresh token and returns a new token pair.
-func (s *authService) Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error) {
+func (s *Service) Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error) {
 	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Refresh")
 	defer span.End()
 
@@ -184,7 +177,7 @@ func (s *authService) Refresh(ctx context.Context, req *RefreshRequest) (*TokenR
 
 // Logout revokes the given refresh token. Unknown or already revoked tokens are
 // treated as success so the endpoint does not reveal token state.
-func (s *authService) Logout(ctx context.Context, req *RefreshRequest) error {
+func (s *Service) Logout(ctx context.Context, req *RefreshRequest) error {
 	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Logout")
 	defer span.End()
 	span.SetAttributes(attribute.String("auth.method", "logout"))
@@ -198,7 +191,7 @@ func (s *authService) Logout(ctx context.Context, req *RefreshRequest) error {
 	return nil
 }
 
-func (s *authService) issueTokens(ctx context.Context, userID int64) (*TokenResponse, error) {
+func (s *Service) issueTokens(ctx context.Context, userID int64) (*TokenResponse, error) {
 	accessToken, err := s.issueAccessToken(userID)
 	if err != nil {
 		return nil, err
@@ -218,7 +211,7 @@ func (s *authService) issueTokens(ctx context.Context, userID int64) (*TokenResp
 	}, nil
 }
 
-func (s *authService) issueAccessToken(userID int64) (string, error) {
+func (s *Service) issueAccessToken(userID int64) (string, error) {
 	now := time.Now()
 	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{
 		Subject:   strconv.FormatInt(userID, 10),

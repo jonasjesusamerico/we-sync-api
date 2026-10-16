@@ -23,8 +23,8 @@ import (
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
-	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
-	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
+	"github.com/jonasjesusamerico/we-sync-api/internal/config"
+	"github.com/jonasjesusamerico/we-sync-api/internal/database"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 	"github.com/jonasjesusamerico/we-sync-api/internal/router"
@@ -35,7 +35,7 @@ func main() {
 	slog.Info("Starting application")
 
 	// Configs
-	properties, err := configs.LoadProperties()
+	properties, err := config.LoadProperties()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
@@ -64,7 +64,7 @@ func main() {
 
 	// DB
 	slog.Info("Connecting to database")
-	db, err := configs.NewConnection(properties)
+	db, err := database.NewConnection(properties)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 		os.Exit(1)
@@ -72,24 +72,23 @@ func main() {
 	slog.Info("Database connection established")
 
 	// Purchase entries
-	purchaseRepo := purchase.NewPurchaseRepository(db)
-	categoryRepo := category.NewCategoryRepository(db)
-	purchaseSvc := purchase.NewPurchaseService(purchaseRepo, categoryRepo)
-	purchaseHandler := purchase.NewPurchaseHandler(purchaseSvc)
-	categorySvc := category.NewCategoryService(categoryRepo)
-	categoryHandler := category.NewCategoryHandler(categorySvc)
-	authRepo := auth.NewAuthRepository(db)
-	authSvc := auth.NewAuthService(
+	purchaseRepo := purchase.NewRepository(db)
+	categoryRepo := category.NewRepository(db)
+	purchaseSvc := purchase.NewService(purchaseRepo, categoryRepo)
+	purchaseHandler := purchase.NewHandler(purchaseSvc)
+	categorySvc := category.NewService(categoryRepo)
+	categoryHandler := category.NewHandler(categorySvc)
+	authRepo := auth.NewRepository(db)
+	authSvc := auth.NewService(
 		authRepo,
 		[]byte(properties.JWT.Secret),
 		properties.JWT.AccessTokenDuration,
 		properties.JWT.RefreshTokenDuration,
 	)
-	authHandler := auth.NewAuthHandler(authSvc)
+	authHandler := auth.NewHandler(authSvc)
 
 	// Server setup
 	handlers := router.Handlers{
-		Health:   handler.NewHealthHandler(),
 		Auth:     authHandler,
 		Purchase: purchaseHandler,
 		Category: categoryHandler,

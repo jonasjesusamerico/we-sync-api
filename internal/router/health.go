@@ -1,4 +1,4 @@
-package handler
+package router
 
 import (
 	"net/http"
@@ -7,13 +7,9 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
-type HealthHandler struct{}
-
-func NewHealthHandler() *HealthHandler {
-	return &HealthHandler{}
-}
-
-func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
+// healthCheck is a liveness probe: it reports that the process serves HTTP
+// and intentionally does not touch the database.
+func healthCheck(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromContext(r.Context())
 	log.Info("request received")
 

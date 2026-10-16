@@ -9,7 +9,7 @@ valem mais do que demonstrar padrões. Qualidade **não** se mede em número de 
 ## Stack (evidência: `go.mod`, `docker-compose.yml`)
 
 - Go 1.27.2, `net/http` + `go-chi/chi/v5`
-- PostgreSQL 17 via `database/sql` + driver `pgx/v5/stdlib` (sem ORM), pools separados `configs.DB.Write` / `configs.DB.Read`
+- PostgreSQL 17 via `database/sql` + driver `pgx/v5/stdlib` (sem ORM), pools separados `database.DB.Write` / `database.DB.Read`
 - Migrations SQL com `golang-migrate` (`migrations/NNNNNN_nome.{up,down}.sql`), executadas pelo serviço `migrate` do compose
 - Auth: JWT HS256 (`golang-jwt/jwt/v5`) + refresh token opaco (hash SHA-256 no banco) + `bcrypt`
 - Dinheiro: `shopspring/decimal` (nunca `float64`); datas sem hora: `purchase.Date`
@@ -25,14 +25,16 @@ cmd/api/main.go          composição manual de dependências + graceful shutdow
 internal/router          rotas, middlewares globais, grupo autenticado
 internal/<domínio>/      auth, category, purchase — um pacote por feature:
   model.go               entidades, DTOs de request/response, tipos enumerados
-  repository.go          interface (porta) + contratos documentados
-  repository_postgres.go implementação SQL
-  service.go             interface + regras de negócio, validação, autorização por dono
-  handler.go             HTTP: decode, parse de path/query, mapeamento erro→status, anotações swag
+  repository.go          interface Repository (porta) + contratos documentados
+  repository_postgres.go PostgresRepository: implementação SQL
+  service.go             Service (struct): regras de negócio, validação, autorização por dono
+  handler.go             interface local `service` + HTTP: decode, parse de path/query, mapeamento erro→status, anotações swag
 internal/apperrors       erros sentinela (ErrNotFound, ErrValidation, ErrUnauthorized, ErrForbidden, ErrConflict)
 internal/httputil        envelope de erro APIError e helpers Write*
 internal/middleware      JWT, CORS, logging, limite de body
-internal/configs         env vars (Config) e conexões de banco
+internal/config          env vars (Config), validação na carga
+internal/database        conexões PostgreSQL (DB com pools Write/Read)
+internal/identity        userID autenticado no context (WithUserID / UserIDFromContext)
 internal/logger, telemetry
 ```
 

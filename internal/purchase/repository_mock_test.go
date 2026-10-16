@@ -2,7 +2,7 @@ package purchase
 
 import "context"
 
-// mockPurchaseRepository is a test double for PurchaseRepository.
+// mockPurchaseRepository is a test double for Repository.
 // Each method falls back gracefully when its Fn field is nil (nil-check pattern).
 type mockPurchaseRepository struct {
 	CreateFn  func(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error)

@@ -4,10 +4,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
+	"github.com/jonasjesusamerico/we-sync-api/internal/config"
 )
 
-func New(loggerProperties configs.LoggerProperties) *slog.Logger {
+func New(loggerProperties config.LoggerProperties) *slog.Logger {
 	handler := slog.NewJSONHandler(
 		os.Stdout,
 		&slog.HandlerOptions{

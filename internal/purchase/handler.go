@@ -1,6 +1,7 @@
 package purchase
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,14 +14,24 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
-// PurchaseHandler handles HTTP requests for purchase entries.
-type PurchaseHandler struct {
-	svc PurchaseService
+// service is the behaviour of *Service the handler depends on. It is declared
+// here, at the consumer, so handler tests can substitute a fake.
+type service interface {
+	Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error)
+	GetByID(ctx context.Context, id int64) (*Purchase, error)
+	List(ctx context.Context, filter ListFilter) (*PaginatedResult, error)
+	Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
+	Delete(ctx context.Context, id int64) error
 }
 
-// NewPurchaseHandler creates a new PurchaseHandler with the given service.
-func NewPurchaseHandler(svc PurchaseService) *PurchaseHandler {
-	return &PurchaseHandler{svc: svc}
+// Handler handles HTTP requests for purchase entries.
+type Handler struct {
+	svc service
+}
+
+// NewHandler creates a new Handler with the given service.
+func NewHandler(svc service) *Handler {
+	return &Handler{svc: svc}
 }
 
 // Create handles POST /purchases
@@ -37,7 +48,7 @@ func NewPurchaseHandler(svc PurchaseService) *PurchaseHandler {
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /purchases [post]
-func (h *PurchaseHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var req CreatePurchaseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteBadRequest(w, "invalid request body")
@@ -70,7 +81,7 @@ func (h *PurchaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Failure     400            {object} httputil.APIError "Invalid query parameter"
 // @Failure     500            {object} httputil.APIError "Internal server error"
 // @Router      /purchases [get]
-func (h *PurchaseHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	filter := ListFilter{
@@ -144,7 +155,7 @@ func (h *PurchaseHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure     404 {object} httputil.APIError "Not found"
 // @Failure     500 {object} httputil.APIError "Internal server error"
 // @Router      /purchases/{id} [get]
-func (h *PurchaseHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return
@@ -174,7 +185,7 @@ func (h *PurchaseHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /purchases/{id} [put]
-func (h *PurchaseHandler) Update(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return
@@ -207,7 +218,7 @@ func (h *PurchaseHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Failure     404 {object} httputil.APIError "Not found"
 // @Failure     500 {object} httputil.APIError "Internal server error"
 // @Router      /purchases/{id} [delete]
-func (h *PurchaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return
@@ -222,7 +233,7 @@ func (h *PurchaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleError maps service-layer errors to standardised HTTP responses.
-func (h *PurchaseHandler) handleError(w http.ResponseWriter, r *http.Request, err error) {
+func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, apperrors.ErrUnauthorized):
 		httputil.WriteUnauthorized(w, "authentication required")

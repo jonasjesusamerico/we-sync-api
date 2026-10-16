@@ -10,6 +10,7 @@ import (
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/httputil"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
@@ -54,7 +55,7 @@ func JWTWithConfig(secret []byte, issuer, audience string, maxTTL time.Duration)
 				return
 			}
 
-			ctx := auth.WithUserID(r.Context(), userID)
+			ctx := identity.WithUserID(r.Context(), userID)
 			ctx = logger.WithLogger(ctx, logger.FromContext(ctx).With("user_id", userID))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

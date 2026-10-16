@@ -1,5 +1,5 @@
-// Package auth provides authentication domain types and helpers.
-package auth
+// Package identity carries the authenticated user identity through request contexts.
+package identity
 
 import "context"
 

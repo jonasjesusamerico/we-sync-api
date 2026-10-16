@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// AuthRepository is the outbound port for authentication persistence.
-type AuthRepository interface {
+// Repository is the outbound port for authentication persistence.
+type Repository interface {
 	// CreateUser returns apperrors.ErrConflict when the email already exists.
 	CreateUser(ctx context.Context, email, passwordHash string) (*User, error)
 	// GetUserByEmail returns (nil, nil) when the user does not exist.

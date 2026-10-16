@@ -15,7 +15,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
-	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
+	"github.com/jonasjesusamerico/we-sync-api/internal/database"
 	"github.com/shopspring/decimal"
 )
 
@@ -36,17 +36,21 @@ func dbAttrs(operation, table string) []attribute.KeyValue {
 	}
 }
 
-type purchasePostgresRepository struct {
-	db *configs.DB
+// PostgresRepository is the PostgreSQL implementation of Repository.
+type PostgresRepository struct {
+	db *database.DB
 }
 
-// NewPurchaseRepository creates a PostgreSQL-backed PurchaseRepository.
-func NewPurchaseRepository(db *configs.DB) PurchaseRepository {
-	return &purchasePostgresRepository{db: db}
+// Compile-time check that PostgresRepository satisfies Repository.
+var _ Repository = (*PostgresRepository)(nil)
+
+// NewRepository creates a PostgreSQL-backed Repository.
+func NewRepository(db *database.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
 // Create inserts a new purchase entry using the write DB and returns the created record.
-func (r *purchasePostgresRepository) Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error) {
+func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error) {
 	// Use a CTE to INSERT and then JOIN with categories in one round-trip.
 	const query = `
 		WITH inserted AS (
@@ -119,7 +123,7 @@ func (r *purchasePostgresRepository) Create(ctx context.Context, userID int64, r
 
 // GetByID fetches a single purchase entry by ID using the read DB.
 // Returns (nil, nil) when the record is not found.
-func (r *purchasePostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Purchase, error) {
+func (r *PostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Purchase, error) {
 	const query = `
 		SELECT
 			pe.id, pe.user_id, pe.purchase_date, pe.description,
@@ -178,7 +182,7 @@ func (r *purchasePostgresRepository) GetByID(ctx context.Context, userID, id int
 }
 
 // List retrieves a paginated and filtered list of purchase entries from the read DB.
-func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter) (*PaginatedResult, error) {
+func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*PaginatedResult, error) {
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.select_list")
 	defer span.End()
 	span.SetAttributes(append(dbAttrs("SELECT", "purchase_entries"),
@@ -318,7 +322,7 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 
 // Update modifies an existing purchase entry using the write DB and returns the updated record.
 // Returns (nil, nil) when no row with the given ID exists.
-func (r *purchasePostgresRepository) Update(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
+func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
 	const query = `
 		WITH updated AS (
 			UPDATE purchase_entries
@@ -403,7 +407,7 @@ func (r *purchasePostgresRepository) Update(ctx context.Context, userID, id int6
 
 // Delete removes a purchase entry by ID using the write DB.
 // Returns (false, nil) when no row with the given ID exists.
-func (r *purchasePostgresRepository) Delete(ctx context.Context, userID, id int64) (bool, error) {
+func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) (bool, error) {
 	const query = `DELETE FROM purchase_entries WHERE id = $1 AND user_id = $2`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.delete")

@@ -21,7 +21,7 @@ const testSecret = "01234567890123456789012345678901"
 
 func TestAuthService_RegisterHashesPassword(t *testing.T) {
 	var stored string
-	svc := NewAuthService(&mockAuthRepository{
+	svc := NewService(&mockAuthRepository{
 		CreateUserFn: func(_ context.Context, email, passwordHash string) (*User, error) {
 			stored = passwordHash
 			return &User{ID: 1, Email: email}, nil
@@ -41,7 +41,7 @@ func TestAuthService_LoginInvalidCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewAuthService(&mockAuthRepository{
+	svc := NewService(&mockAuthRepository{
 		GetUserByEmailFn: func(context.Context, string) (*User, error) {
 			return &User{ID: 1, PasswordHash: string(hash)}, nil
 		},
@@ -58,7 +58,7 @@ func TestAuthService_LoginIssuesClaimsAndHashesRefreshToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	var storedHash string
-	svc := NewAuthService(&mockAuthRepository{
+	svc := NewService(&mockAuthRepository{
 		GetUserByEmailFn: func(context.Context, string) (*User, error) {
 			return &User{ID: 7, PasswordHash: string(hash)}, nil
 		},
@@ -92,7 +92,7 @@ func TestAuthService_NormalizesEmailForRegisterAndLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewAuthService(&mockAuthRepository{
+	svc := NewService(&mockAuthRepository{
 		CreateUserFn: func(_ context.Context, email, _ string) (*User, error) {
 			registeredEmail = email
 			return &User{ID: 1, Email: email}, nil
@@ -125,7 +125,7 @@ func TestAuthService_ValidatePasswordProperty(t *testing.T) {
 
 func TestAuthService_LoginErrorMessageProperty(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		svc := withMinPasswordCost(NewAuthService(&mockAuthRepository{
+		svc := withMinPasswordCost(NewService(&mockAuthRepository{
 			GetUserByEmailFn: func(context.Context, string) (*User, error) { return nil, nil },
 		}, []byte(testSecret), time.Minute, time.Hour))
 		// Prefixes guarantee non-empty strings, so the early validation for
@@ -141,21 +141,21 @@ func TestAuthService_LoginErrorMessageProperty(t *testing.T) {
 	})
 }
 
-func newTestAuthService(repo AuthRepository) AuthService {
-	return NewAuthService(repo, []byte(testSecret), 15*time.Minute, time.Hour)
+func newTestAuthService(repo Repository) *Service {
+	return NewService(repo, []byte(testSecret), 15*time.Minute, time.Hour)
 }
 
 // withMinPasswordCost lowers the bcrypt cost so tests that hash many times
 // (e.g. property tests hitting the unknown-user path) stay fast.
-func withMinPasswordCost(svc AuthService) AuthService {
-	svc.(*authService).passwordCost = bcrypt.MinCost
+func withMinPasswordCost(svc *Service) *Service {
+	svc.passwordCost = bcrypt.MinCost
 	return svc
 }
 
 func TestAuthService_Login_UnknownUserComparesDummyHash(t *testing.T) {
-	svc := NewAuthService(&mockAuthRepository{
+	svc := NewService(&mockAuthRepository{
 		GetUserByEmailFn: func(context.Context, string) (*User, error) { return nil, nil },
-	}, []byte(testSecret), time.Minute, time.Hour).(*authService)
+	}, []byte(testSecret), time.Minute, time.Hour)
 
 	_, err := svc.Login(context.Background(), &LoginRequest{Email: "nobody@example.com", Password: "password123"})
 	if !errors.Is(err, apperrors.ErrUnauthorized) || err.Error() != "invalid credentials" {

@@ -14,7 +14,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
-	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
+	"github.com/jonasjesusamerico/we-sync-api/internal/database"
 )
 
 const (
@@ -34,18 +34,22 @@ func dbAttrs(operation, table string) []attribute.KeyValue {
 	}
 }
 
-type categoryPostgresRepository struct {
-	db *configs.DB
+// PostgresRepository is the PostgreSQL implementation of Repository.
+type PostgresRepository struct {
+	db *database.DB
 }
 
-// NewCategoryRepository creates a PostgreSQL-backed CategoryRepository.
-func NewCategoryRepository(db *configs.DB) CategoryRepository {
-	return &categoryPostgresRepository{db: db}
+// Compile-time check that PostgresRepository satisfies Repository.
+var _ Repository = (*PostgresRepository)(nil)
+
+// NewRepository creates a PostgreSQL-backed Repository.
+func NewRepository(db *database.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
 // Create inserts a new personal category owned by userID.
 // Returns apperrors.ErrConflict on name uniqueness violation (pg error 23505).
-func (r *categoryPostgresRepository) Create(ctx context.Context, userID int64, req *CreateCategoryRequest) (*Category, error) {
+func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *CreateCategoryRequest) (*Category, error) {
 	const query = `
 		INSERT INTO categories (user_id, name)
 		VALUES ($1, $2)
@@ -89,7 +93,7 @@ func (r *categoryPostgresRepository) Create(ctx context.Context, userID int64, r
 
 // GetByID fetches a category by ID, regardless of ownership.
 // Returns (nil, nil) when the category does not exist.
-func (r *categoryPostgresRepository) GetByID(ctx context.Context, id int64) (*Category, error) {
+func (r *PostgresRepository) GetByID(ctx context.Context, id int64) (*Category, error) {
 	const query = `
 		SELECT id, user_id, name, created_at, updated_at
 		FROM   categories
@@ -135,7 +139,7 @@ func (r *categoryPostgresRepository) GetByID(ctx context.Context, id int64) (*Ca
 
 // ListForUser returns all categories visible to the user: global ones plus the user's own.
 // Globals are listed first (user_id IS NULL), then personal categories alphabetically.
-func (r *categoryPostgresRepository) ListForUser(ctx context.Context, userID int64) ([]Category, error) {
+func (r *PostgresRepository) ListForUser(ctx context.Context, userID int64) ([]Category, error) {
 	// ORDER BY (user_id IS NULL) DESC puts globals first; lower(name) for deterministic order.
 	const query = `
 		SELECT id, user_id, name, created_at, updated_at
@@ -185,7 +189,7 @@ func (r *categoryPostgresRepository) ListForUser(ctx context.Context, userID int
 }
 
 // ExistsGlobalByName reports whether a global category named name exists (case-insensitive).
-func (r *categoryPostgresRepository) ExistsGlobalByName(ctx context.Context, name string) (bool, error) {
+func (r *PostgresRepository) ExistsGlobalByName(ctx context.Context, name string) (bool, error) {
 	const query = `
 		SELECT EXISTS (
 			SELECT 1 FROM categories
@@ -213,7 +217,7 @@ func (r *categoryPostgresRepository) ExistsGlobalByName(ctx context.Context, nam
 // Update renames a personal category scoped to userID.
 // Returns (nil, nil) when the category does not exist or belongs to another user.
 // Returns apperrors.ErrConflict on name uniqueness violation.
-func (r *categoryPostgresRepository) Update(ctx context.Context, userID, id int64, req *UpdateCategoryRequest) (*Category, error) {
+func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *UpdateCategoryRequest) (*Category, error) {
 	const query = `
 		UPDATE categories
 		SET    name = $1, updated_at = NOW()
@@ -265,7 +269,7 @@ func (r *categoryPostgresRepository) Update(ctx context.Context, userID, id int6
 // Delete removes a personal category scoped to userID.
 // Returns (false, nil) when the category does not exist or belongs to another user.
 // Returns apperrors.ErrConflict when the category is referenced by purchase entries (pg error 23503).
-func (r *categoryPostgresRepository) Delete(ctx context.Context, userID, id int64) (bool, error) {
+func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) (bool, error) {
 	const query = `DELETE FROM categories WHERE id = $1 AND user_id = $2`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.categories.delete")

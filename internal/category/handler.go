@@ -1,6 +1,7 @@
 package category
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,14 +13,23 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
-// CategoryHandler handles HTTP requests for the category domain.
-type CategoryHandler struct {
-	svc CategoryService
+// service is the behaviour of *Service the handler depends on. It is declared
+// here, at the consumer, so handler tests can substitute a fake.
+type service interface {
+	Create(ctx context.Context, req *CreateCategoryRequest) (*Category, error)
+	List(ctx context.Context) ([]Category, error)
+	Update(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error)
+	Delete(ctx context.Context, id int64) error
 }
 
-// NewCategoryHandler creates a new CategoryHandler with the given service.
-func NewCategoryHandler(svc CategoryService) *CategoryHandler {
-	return &CategoryHandler{svc: svc}
+// Handler handles HTTP requests for the category domain.
+type Handler struct {
+	svc service
+}
+
+// NewHandler creates a new Handler with the given service.
+func NewHandler(svc service) *Handler {
+	return &Handler{svc: svc}
 }
 
 // Create handles POST /categories
@@ -37,7 +47,7 @@ func NewCategoryHandler(svc CategoryService) *CategoryHandler {
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /categories [post]
-func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var req CreateCategoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteBadRequest(w, "invalid request body")
@@ -63,7 +73,7 @@ func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Failure     401 {object} httputil.APIError "Unauthorized"
 // @Failure     500 {object} httputil.APIError "Internal server error"
 // @Router      /categories [get]
-func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.List(r.Context())
 	if err != nil {
 		h.handleError(w, r, err)
@@ -91,7 +101,7 @@ func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /categories/{id} [put]
-func (h *CategoryHandler) Update(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return
@@ -130,7 +140,7 @@ func (h *CategoryHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Failure     409 {object} httputil.APIError "Category in use by purchase entries"
 // @Failure     500 {object} httputil.APIError "Internal server error"
 // @Router      /categories/{id} [delete]
-func (h *CategoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return
@@ -145,7 +155,7 @@ func (h *CategoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleError maps service-layer errors to standardised HTTP responses.
-func (h *CategoryHandler) handleError(w http.ResponseWriter, r *http.Request, err error) {
+func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, apperrors.ErrUnauthorized):
 		httputil.WriteUnauthorized(w, "authentication required")

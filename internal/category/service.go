@@ -11,34 +11,27 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
-	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 )
 
 const tracerName = "we-sync-api/category"
 
-// CategoryService defines the inbound port for category business logic.
-type CategoryService interface {
-	Create(ctx context.Context, req *CreateCategoryRequest) (*Category, error)
-	List(ctx context.Context) ([]Category, error)
-	Update(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error)
-	Delete(ctx context.Context, id int64) error
+// Service implements the category business rules.
+type Service struct {
+	repo Repository
 }
 
-type categoryService struct {
-	repo CategoryRepository
-}
-
-// NewCategoryService creates a new CategoryService backed by the given repository.
-func NewCategoryService(repo CategoryRepository) CategoryService {
-	return &categoryService{repo: repo}
+// NewService creates a new Service backed by the given repository.
+func NewService(repo Repository) *Service {
+	return &Service{repo: repo}
 }
 
 // Create validates and persists a new personal category for the authenticated user.
-func (s *categoryService) Create(ctx context.Context, req *CreateCategoryRequest) (*Category, error) {
+func (s *Service) Create(ctx context.Context, req *CreateCategoryRequest) (*Category, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.Create")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
@@ -71,11 +64,11 @@ func (s *categoryService) Create(ctx context.Context, req *CreateCategoryRequest
 }
 
 // List returns all categories visible to the authenticated user.
-func (s *categoryService) List(ctx context.Context) ([]Category, error) {
+func (s *Service) List(ctx context.Context) ([]Category, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.List")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
@@ -94,11 +87,11 @@ func (s *categoryService) List(ctx context.Context) ([]Category, error) {
 // Update renames a personal category owned by the authenticated user.
 // Returns apperrors.ErrNotFound if the category does not exist or belongs to another user.
 // Returns apperrors.ErrForbidden if the category is global.
-func (s *categoryService) Update(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error) {
+func (s *Service) Update(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.Update")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
@@ -161,11 +154,11 @@ func (s *categoryService) Update(ctx context.Context, id int64, req *UpdateCateg
 // Returns apperrors.ErrNotFound if the category does not exist or belongs to another user.
 // Returns apperrors.ErrForbidden if the category is global.
 // Returns apperrors.ErrConflict if the category is referenced by purchase entries.
-func (s *categoryService) Delete(ctx context.Context, id int64) error {
+func (s *Service) Delete(ctx context.Context, id int64) error {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.Delete")
 	defer span.End()
 
-	userID, ok := auth.UserIDFromContext(ctx)
+	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
 		return apperrors.ErrUnauthorized
 	}
@@ -211,7 +204,7 @@ func (s *categoryService) Delete(ctx context.Context, id int64) error {
 
 // checkGlobalNameCollision returns ErrConflict if a global category has the same
 // name (case-insensitive). Uniqueness among personal categories is enforced by the DB.
-func (s *categoryService) checkGlobalNameCollision(ctx context.Context, name string) error {
+func (s *Service) checkGlobalNameCollision(ctx context.Context, name string) error {
 	exists, err := s.repo.ExistsGlobalByName(ctx, name)
 	if err != nil {
 		return fmt.Errorf("categoryService.checkGlobalNameCollision: %w", err)

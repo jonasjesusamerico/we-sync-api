@@ -22,7 +22,7 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-// mockPurchaseService is a test double for PurchaseService used in handler tests.
+// mockPurchaseService is a test double for service used in handler tests.
 type mockPurchaseService struct {
 	CreateFn  func(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error)
 	GetByIDFn func(ctx context.Context, id int64) (*Purchase, error)
@@ -108,7 +108,7 @@ func decodeError(t *testing.T, body *bytes.Buffer) httputil.APIError {
 // ---------------------------------------------------------------------------
 
 func TestHandler_Create_Success(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
 			return samplePurchase(), nil
 		},
@@ -133,7 +133,7 @@ func TestHandler_Create_Success(t *testing.T) {
 }
 
 func TestHandler_Create_InvalidJSON(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{})
+	h := NewHandler(&mockPurchaseService{})
 
 	req := httptest.NewRequest(http.MethodPost, "/purchases", strings.NewReader(`{invalid}`))
 	rec := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestHandler_Create_InvalidJSON(t *testing.T) {
 }
 
 func TestHandler_Create_ValidationError(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
 			return nil, apperrors.NewValidationError("amount must be greater than zero")
 		},
@@ -171,7 +171,7 @@ func TestHandler_Create_ValidationError(t *testing.T) {
 }
 
 func TestHandler_Create_InternalError(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
 			return nil, errors.New("db unavailable")
 		},
@@ -192,7 +192,7 @@ func TestHandler_Create_InternalError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_GetByID_Success(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		GetByIDFn: func(_ context.Context, id int64) (*Purchase, error) {
 			return samplePurchase(), nil
 		},
@@ -210,7 +210,7 @@ func TestHandler_GetByID_Success(t *testing.T) {
 }
 
 func TestHandler_GetByID_InvalidID(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{})
+	h := NewHandler(&mockPurchaseService{})
 
 	req := httptest.NewRequest(http.MethodGet, "/purchases/abc", nil)
 	req = withChiID(req, "abc")
@@ -224,7 +224,7 @@ func TestHandler_GetByID_InvalidID(t *testing.T) {
 }
 
 func TestHandler_GetByID_NotFound(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		GetByIDFn: func(_ context.Context, _ int64) (*Purchase, error) {
 			return nil, apperrors.ErrNotFound
 		},
@@ -250,7 +250,7 @@ func TestHandler_GetByID_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_List_Success(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		ListFn: func(_ context.Context, _ ListFilter) (*PaginatedResult, error) {
 			return &PaginatedResult{Items: []Purchase{*samplePurchase()}, Total: 1, Page: 1, PageSize: 20, TotalPages: 1}, nil
 		},
@@ -267,7 +267,7 @@ func TestHandler_List_Success(t *testing.T) {
 }
 
 func TestHandler_List_InvalidMonth(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{})
+	h := NewHandler(&mockPurchaseService{})
 
 	req := httptest.NewRequest(http.MethodGet, "/purchases?month=13", nil)
 	rec := httptest.NewRecorder()
@@ -280,7 +280,7 @@ func TestHandler_List_InvalidMonth(t *testing.T) {
 }
 
 func TestHandler_List_InvalidPageSize(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		ListFn: func(_ context.Context, _ ListFilter) (*PaginatedResult, error) {
 			return nil, apperrors.NewValidationError("page_size must be at most 100")
 		},
@@ -299,7 +299,7 @@ func TestHandler_List_InvalidPageSize(t *testing.T) {
 func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 	var capturedFilter ListFilter
 
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		ListFn: func(_ context.Context, f ListFilter) (*PaginatedResult, error) {
 			capturedFilter = f
 			return &PaginatedResult{Items: []Purchase{}, Total: 0, Page: 1, PageSize: 20}, nil
@@ -342,7 +342,7 @@ func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_Update_Success(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		UpdateFn: func(_ context.Context, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
 			return samplePurchase(), nil
 		},
@@ -361,7 +361,7 @@ func TestHandler_Update_Success(t *testing.T) {
 }
 
 func TestHandler_Update_NotFound(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		UpdateFn: func(_ context.Context, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
 			return nil, apperrors.ErrNotFound
 		},
@@ -379,7 +379,7 @@ func TestHandler_Update_NotFound(t *testing.T) {
 }
 
 func TestHandler_Create_CategoryNotFound(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
 			return nil, category.ErrCategoryNotFound
 		},
@@ -399,7 +399,7 @@ func TestHandler_Create_CategoryNotFound(t *testing.T) {
 }
 
 func TestHandler_Update_InvalidJSON(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{})
+	h := NewHandler(&mockPurchaseService{})
 
 	req := httptest.NewRequest(http.MethodPut, "/purchases/1", strings.NewReader(`{bad}`))
 	req = withChiID(req, "1")
@@ -417,7 +417,7 @@ func TestHandler_Update_InvalidJSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_Delete_Success(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		DeleteFn: func(_ context.Context, _ int64) error { return nil },
 	})
 
@@ -433,7 +433,7 @@ func TestHandler_Delete_Success(t *testing.T) {
 }
 
 func TestHandler_Delete_NotFound(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{
+	h := NewHandler(&mockPurchaseService{
 		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrNotFound },
 	})
 
@@ -449,7 +449,7 @@ func TestHandler_Delete_NotFound(t *testing.T) {
 }
 
 func TestHandler_Delete_InvalidID(t *testing.T) {
-	h := NewPurchaseHandler(&mockPurchaseService{})
+	h := NewHandler(&mockPurchaseService{})
 
 	req := httptest.NewRequest(http.MethodDelete, "/purchases/0", nil)
 	req = withChiID(req, "0")

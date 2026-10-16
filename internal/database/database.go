@@ -1,4 +1,4 @@
-package configs
+package database
 
 import (
 	"database/sql"
@@ -6,6 +6,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/jonasjesusamerico/we-sync-api/internal/config"
 )
 
 type DB struct {
@@ -13,15 +15,15 @@ type DB struct {
 	Read  *sql.DB
 }
 
-func NewConnection(config *Config) (*DB, error) {
+func NewConnection(cfg *config.Config) (*DB, error) {
 	slog.Info("Opening write database connection")
-	writeDB, err := sql.Open("pgx", config.DatabaseWriteProperties.DATABASE_DSN)
+	writeDB, err := sql.Open("pgx", cfg.DatabaseWriteProperties.DATABASE_DSN)
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Info("Configuring write connection pool")
-	configurePool(writeDB, config.DatabaseWriteProperties)
+	configurePool(writeDB, cfg.DatabaseWriteProperties)
 
 	slog.Info("Pinging write database")
 	if err := writeDB.Ping(); err != nil {
@@ -30,14 +32,14 @@ func NewConnection(config *Config) (*DB, error) {
 	}
 
 	slog.Info("Opening read database connection")
-	readDB, err := sql.Open("pgx", config.DatabaseReadProperties.DATABASE_DSN)
+	readDB, err := sql.Open("pgx", cfg.DatabaseReadProperties.DATABASE_DSN)
 	if err != nil {
 		_ = writeDB.Close()
 		return nil, err
 	}
 
 	slog.Info("Configuring read connection pool")
-	configurePool(readDB, config.DatabaseReadProperties)
+	configurePool(readDB, cfg.DatabaseReadProperties)
 
 	slog.Info("Pinging read database")
 	if err := readDB.Ping(); err != nil {
@@ -53,7 +55,7 @@ func NewConnection(config *Config) (*DB, error) {
 	}, nil
 }
 
-func configurePool(db *sql.DB, properties DatabaseProperties) {
+func configurePool(db *sql.DB, properties config.DatabaseProperties) {
 	db.SetMaxOpenConns(properties.DATABASE_MAX_OPEN_CONNS)
 	db.SetMaxIdleConns(properties.DATABASE_MAX_IDLE_CONNS)
 	db.SetConnMaxLifetime(time.Duration(properties.DATABASE_CONN_MAX_LIFETIME) * time.Minute)
