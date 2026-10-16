@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,12 @@ type Service struct {
 	// failed login always costs one bcrypt comparison and response time does not
 	// reveal whether an account exists. Computed lazily, once per service.
 	dummyPasswordHash func() []byte
+
+	// passwordSlots bounds concurrent bcrypt operations to the CPUs the Go
+	// runtime may use. bcrypt is pure CPU work, so running more at once only
+	// slows every request on the instance; a login burst queues here instead
+	// of starving the other endpoints.
+	passwordSlots chan struct{}
 }
 
 // NewService creates a Service using the supplied JWT settings.
@@ -54,6 +61,8 @@ func NewService(repo Repository, jwtSecret []byte, accessTTL, refreshTTL time.Du
 		accessTTL:    accessTTL,
 		refreshTTL:   refreshTTL,
 		passwordCost: defaultPasswordCost,
+
+		passwordSlots: make(chan struct{}, runtime.GOMAXPROCS(0)),
 	}
 	s.dummyPasswordHash = sync.OnceValue(func() []byte {
 		hash, err := bcrypt.GenerateFromPassword([]byte("we-sync-api-dummy-password"), s.passwordCost)
@@ -64,6 +73,17 @@ func NewService(repo Repository, jwtSecret []byte, accessTTL, refreshTTL time.Du
 		return hash
 	})
 	return s
+}
+
+// acquirePasswordSlot blocks until a bcrypt slot is free or ctx is done.
+// The caller must call release exactly once after the bcrypt operation.
+func (s *Service) acquirePasswordSlot(ctx context.Context) (release func(), err error) {
+	select {
+	case s.passwordSlots <- struct{}{}:
+		return func() { <-s.passwordSlots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait for password slot: %w", ctx.Err())
+	}
 }
 
 // Register validates and creates a user with a bcrypt password hash.
@@ -82,7 +102,12 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		return nil, recordAuthError(span, err)
 	}
 
+	release, err := s.acquirePasswordSlot(ctx)
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.Register: %w", err))
+	}
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), s.passwordCost)
+	release()
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register hash password: %w", err))
 	}
@@ -116,11 +141,16 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest) (*TokenResponse,
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Login: %w", err))
 	}
+	release, err := s.acquirePasswordSlot(ctx)
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.Login: %w", err))
+	}
 	hash := s.dummyPasswordHash()
 	if user != nil {
 		hash = []byte(user.PasswordHash)
 	}
 	passwordErr := bcrypt.CompareHashAndPassword(hash, []byte(req.Password))
+	release()
 	if user == nil || passwordErr != nil {
 		logInvalidLogin(ctx)
 		return nil, recordAuthError(span, newInvalidCredentialsError())

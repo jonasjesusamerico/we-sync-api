@@ -15,7 +15,7 @@ valem mais do que demonstrar padrões. Qualidade **não** se mede em número de 
 - Dinheiro: `shopspring/decimal` (nunca `float64`); datas sem hora: `purchase.Date`
 - Observabilidade: OpenTelemetry (traces + métricas), `log/slog` JSON, Prometheus/Grafana em `observability/`
 - Docs da API: `swaggo` (anotações nos handlers → `docs/swagger/`, arquivos gerados — não editar à mão)
-- Testes: `testing`, `httptest`, mocks manuais, `pgregory.net/rapid`
+- Testes: `testing`, `httptest`, mocks manuais, `pgregory.net/rapid`; carga com k6 em `perf/k6/`
 - Deploy: 2 instâncias (`app1`, `app2`) atrás do nginx, mesmo banco
 
 ## Mapa do código
@@ -51,6 +51,7 @@ go test ./...                  # unitários, não exigem banco
 go test -race ./internal/...   # ao mexer em concorrência/middlewares
 go test ./internal/purchase -run TestService_Create -v
 docker compose up --build      # postgres, migrate, nginx (:8080), 2 apps, observabilidade
+docker run --rm -i --network host -v $PWD/perf/k6:/scripts:ro grafana/k6:1.0.0 run /scripts/smoke.js   # carga: ver perf/k6/README.md
 go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/api/main.go -o docs/swagger   # após mudar anotações
 ```
 

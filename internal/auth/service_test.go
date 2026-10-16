@@ -374,3 +374,93 @@ func TestAuthService_Logout_RepositoryError(t *testing.T) {
 		t.Fatalf("Logout() error = %v, want wrapped repository error", err)
 	}
 }
+
+func TestService_AcquirePasswordSlot_LimitsConcurrency(t *testing.T) {
+	svc := NewService(&mockAuthRepository{}, []byte(testSecret), time.Minute, time.Hour)
+	svc.passwordSlots = make(chan struct{}, 1)
+
+	release, err := svc.acquirePasswordSlot(context.Background())
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+
+	// With the only slot taken, a done context must give up instead of waiting.
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.acquirePasswordSlot(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquire with slot taken = %v, want context.Canceled", err)
+	}
+
+	release()
+	release2, err := svc.acquirePasswordSlot(context.Background())
+	if err != nil {
+		t.Fatalf("acquire after release: %v", err)
+	}
+	release2()
+}
+
+func TestService_Login_ContextDoneWhileWaitingForPasswordSlot(t *testing.T) {
+	svc := NewService(&mockAuthRepository{
+		GetUserByEmailFn: func(context.Context, string) (*User, error) { return nil, nil },
+	}, []byte(testSecret), time.Minute, time.Hour)
+	svc.passwordSlots = make(chan struct{}, 1)
+	svc.passwordSlots <- struct{}{} // every slot busy
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.Login(ctx, &LoginRequest{Email: "user@example.com", Password: "password123"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Login() error = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Fatal("Login() must not report invalid credentials when it never compared the password")
+	}
+}
+
+func TestService_Register_ContextDoneWhileWaitingForPasswordSlot(t *testing.T) {
+	svc := NewService(&mockAuthRepository{
+		CreateUserFn: func(context.Context, string, string) (*User, error) {
+			t.Fatal("CreateUser must not be called without a password hash")
+			return nil, nil
+		},
+	}, []byte(testSecret), time.Minute, time.Hour)
+	svc.passwordSlots = make(chan struct{}, 1)
+	svc.passwordSlots <- struct{}{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.Register(ctx, &RegisterRequest{Email: "user@example.com", Password: "password123"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Register() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestService_Login_ConcurrentCallsReleaseSlots(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := withMinPasswordCost(NewService(&mockAuthRepository{
+		GetUserByEmailFn: func(_ context.Context, email string) (*User, error) {
+			return &User{ID: 1, Email: email, PasswordHash: string(hash)}, nil
+		},
+	}, []byte(testSecret), time.Minute, time.Hour))
+	svc.passwordSlots = make(chan struct{}, 2)
+
+	const calls = 16
+	errs := make(chan error, calls)
+	for range calls {
+		go func() {
+			_, err := svc.Login(context.Background(), &LoginRequest{Email: "user@example.com", Password: "password123"})
+			errs <- err
+		}()
+	}
+	for range calls {
+		if err := <-errs; err != nil {
+			t.Fatalf("Login() error = %v", err)
+		}
+	}
+	if n := len(svc.passwordSlots); n != 0 {
+		t.Fatalf("slots still held after all logins = %d, want 0", n)
+	}
+}

@@ -83,6 +83,15 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Limits below (cpus/mem_limit) are unchanged; these only tune the runtime to them.
+      # Soft heap target under mem_limit, so the GC works harder before the kernel OOM-kills.
+      GOMEMLIMIT: 80MiB
+      # One P for a 0.35 CPU quota: fewer bursts that exhaust the CFS quota and stall p99.
+      GOMAXPROCS: "1"
+      # Trace 10% of requests (metrics stay complete).
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "0.1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -103,6 +112,15 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Limits below (cpus/mem_limit) are unchanged; these only tune the runtime to them.
+      # Soft heap target under mem_limit, so the GC works harder before the kernel OOM-kills.
+      GOMEMLIMIT: 80MiB
+      # One P for a 0.35 CPU quota: fewer bursts that exhaust the CFS quota and stall p99.
+      GOMAXPROCS: "1"
+      # Trace 10% of requests (metrics stay complete).
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "0.1"
     depends_on:
       migrate:
         condition: service_completed_successfully

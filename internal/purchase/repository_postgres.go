@@ -200,49 +200,14 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 		attribute.Int("db.query.page_size", filter.PageSize),
 	)...)
 
-	args := []any{}
-	conditions := []string{"pe.user_id = $1"}
-	args = append(args, filter.UserID)
-	argIdx := 2
-
-	if filter.Month > 0 {
-		conditions = append(conditions, fmt.Sprintf("EXTRACT(MONTH FROM pe.purchase_date) = $%d", argIdx))
-		args = append(args, filter.Month)
-		argIdx++
-	}
-	if filter.Year > 0 {
-		conditions = append(conditions, fmt.Sprintf("EXTRACT(YEAR FROM pe.purchase_date) = $%d", argIdx))
-		args = append(args, filter.Year)
-		argIdx++
-	}
-	if filter.Status != "" {
-		conditions = append(conditions, fmt.Sprintf("pe.status = $%d", argIdx))
-		args = append(args, string(filter.Status))
-		argIdx++
-	}
-	if filter.CategoryID > 0 {
-		conditions = append(conditions, fmt.Sprintf("pe.category_id = $%d", argIdx))
-		args = append(args, filter.CategoryID)
-		argIdx++
-	}
-	if filter.PaymentMethodID > 0 {
-		conditions = append(conditions, fmt.Sprintf("pe.payment_method_id = $%d", argIdx))
-		args = append(args, filter.PaymentMethodID)
-		argIdx++
-	}
-
-	where := ""
-	if len(conditions) > 0 {
-		where = "WHERE " + strings.Join(conditions, " AND ")
-	}
+	where, args := listWhere(filter)
+	argIdx := len(args) + 1
 
 	ctx, cancel := context.WithTimeout(ctx, dbTimeout)
 	defer cancel()
 
-	countQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM purchase_entries pe JOIN categories c ON c.id = pe.category_id %s",
-		where,
-	)
+	// No JOIN: category_id is a NOT NULL foreign key, so joining cannot change the count.
+	countQuery := "SELECT COUNT(*) FROM purchase_entries pe " + where
 	var total int
 	if err := r.db.Read.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		span.RecordError(err)
@@ -333,6 +298,43 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 		PageSize:   filter.PageSize,
 		TotalPages: totalPages,
 	}, nil
+}
+
+// listWhere builds the WHERE clause and its positional arguments for List.
+// The year (and month, when both are given) filter is expressed as a
+// purchase_date range so it can use the (user_id, purchase_date) index;
+// a month without a year matches that month in any year.
+func listWhere(filter ListFilter) (string, []any) {
+	args := []any{filter.UserID}
+	conditions := []string{"pe.user_id = $1"}
+	add := func(condition string, arg any) {
+		args = append(args, arg)
+		conditions = append(conditions, fmt.Sprintf(condition, len(args)))
+	}
+
+	switch {
+	case filter.Year > 0 && filter.Month > 0:
+		from := time.Date(filter.Year, time.Month(filter.Month), 1, 0, 0, 0, 0, time.UTC)
+		add("pe.purchase_date >= $%d", from)
+		add("pe.purchase_date < $%d", from.AddDate(0, 1, 0))
+	case filter.Year > 0:
+		from := time.Date(filter.Year, time.January, 1, 0, 0, 0, 0, time.UTC)
+		add("pe.purchase_date >= $%d", from)
+		add("pe.purchase_date < $%d", from.AddDate(1, 0, 0))
+	case filter.Month > 0:
+		add("EXTRACT(MONTH FROM pe.purchase_date) = $%d", filter.Month)
+	}
+	if filter.Status != "" {
+		add("pe.status = $%d", string(filter.Status))
+	}
+	if filter.CategoryID > 0 {
+		add("pe.category_id = $%d", filter.CategoryID)
+	}
+	if filter.PaymentMethodID > 0 {
+		add("pe.payment_method_id = $%d", filter.PaymentMethodID)
+	}
+
+	return "WHERE " + strings.Join(conditions, " AND "), args
 }
 
 // Update modifies an existing purchase entry using the write DB and returns the updated record.

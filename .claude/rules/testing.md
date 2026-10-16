@@ -17,9 +17,10 @@ paths:
 | Handler | `httptest.NewRecorder` + mock da interface local `service` + `withChiID` | `internal/category/handler_test.go` |
 | Invariantes | propriedade com `rapid` | `purchase/service_test.go`, `middleware/jwt_test.go` |
 | Middleware/config/util | teste direto | `jwt_test.go`, `env_properties_test.go`, `response_test.go` |
-| Repositório, integração, contrato, e2e, carga | **não há**; validação manual com `docker compose` + `http/*.http` | — |
+| Repositório, integração, contrato, e2e | **não há**; validação manual com `docker compose` + `http/*.http` | — |
+| Carga/performance | k6 contra o compose (fora do `go test`) | `perf/k6/README.md` |
 
-Só stdlib + `rapid`. Sem testify, gomock, mockery, testcontainers, k6 etc. sem pedido.
+Só stdlib + `rapid`. Sem testify, gomock, mockery, testcontainers etc. sem pedido.
 
 ## O que testar
 

@@ -118,9 +118,13 @@ func newResource(cfg Config) (*resource.Resource, error) {
 }
 
 func newTracerProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdktrace.TracerProvider, error) {
+	// No WithSampler: the SDK reads the standard OTEL_TRACES_SAMPLER and
+	// OTEL_TRACES_SAMPLER_ARG env vars (e.g. parentbased_traceidratio + 0.1) and
+	// defaults to parentbased_always_on, i.e. every request when unset. Sampling
+	// a fraction of requests saves span creation and export CPU under load;
+	// metrics are not sampled.
 	opts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	}
 
 	if cfg.OTLPEndpoint != "" {

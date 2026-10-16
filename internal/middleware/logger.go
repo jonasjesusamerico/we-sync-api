@@ -53,10 +53,10 @@ func Logging(baseLogger *slog.Logger) func(http.Handler) http.Handler {
 			}
 
 			// Correlate with the OTel span created by otelhttp (which runs
-			// before this middleware). When OTel is disabled or no span is
-			// active the span context is zero-valued and IsValid() returns
-			// false — the trace fields are simply omitted.
-			if sc := trace.SpanFromContext(r.Context()).SpanContext(); sc.IsValid() {
+			// before this middleware). When OTel is disabled, no span is
+			// active or the trace was not sampled (so it is never exported),
+			// the trace fields are omitted instead of pointing nowhere.
+			if sc := trace.SpanFromContext(r.Context()).SpanContext(); sc.IsValid() && sc.IsSampled() {
 				fields = append(fields,
 					"trace_id", sc.TraceID().String(),
 					"span_id", sc.SpanID().String(),
