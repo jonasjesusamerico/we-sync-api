@@ -26,7 +26,7 @@ func NewPurchaseHandler(svc PurchaseService) *PurchaseHandler {
 // Create handles POST /purchases
 //
 // @Summary     Create a purchase entry
-// @Description Creates a new monthly account entry (lançamento).
+// @Description Creates a new monthly purchase entry.
 // @Tags        purchases
 // @Accept      json
 // @Produce     json

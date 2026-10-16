@@ -3,12 +3,16 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"golang.org/x/crypto/bcrypt"
 	"pgregory.net/rapid"
 )
@@ -43,7 +47,7 @@ func TestAuthService_LoginInvalidCredentials(t *testing.T) {
 		},
 	}, []byte(testSecret), time.Minute, time.Hour)
 	_, err = svc.Login(context.Background(), &LoginRequest{Email: "user@example.com", Password: "wrongpass"})
-	if !errors.Is(err, apperrors.ErrUnauthorized) || err.Error() != "credenciais inválidas" {
+	if !errors.Is(err, apperrors.ErrUnauthorized) || err.Error() != "invalid credentials" {
 		t.Fatalf("Login() error = %v", err)
 	}
 }
@@ -121,17 +125,17 @@ func TestAuthService_ValidatePasswordProperty(t *testing.T) {
 
 func TestAuthService_LoginErrorMessageProperty(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		svc := NewAuthService(&mockAuthRepository{
+		svc := withMinPasswordCost(NewAuthService(&mockAuthRepository{
 			GetUserByEmailFn: func(context.Context, string) (*User, error) { return nil, nil },
-		}, []byte(testSecret), time.Minute, time.Hour)
+		}, []byte(testSecret), time.Minute, time.Hour))
 		// Prefixes guarantee non-empty strings, so the early validation for
 		// blank email/password is never triggered and the path that reaches
-		// the repository (user not found) always returns "credenciais inválidas".
+		// the repository (user not found) always returns "invalid credentials".
 		_, err := svc.Login(context.Background(), &LoginRequest{
 			Email:    "user@example-" + rapid.StringMatching(`[a-z0-9]+`).Draw(t, "email"),
 			Password: "wrong-" + rapid.StringMatching(`[a-z0-9]+`).Draw(t, "password"),
 		})
-		if err == nil || err.Error() != "credenciais inválidas" {
+		if err == nil || err.Error() != "invalid credentials" {
 			t.Fatalf("error = %v", err)
 		}
 	})
@@ -139,6 +143,64 @@ func TestAuthService_LoginErrorMessageProperty(t *testing.T) {
 
 func newTestAuthService(repo AuthRepository) AuthService {
 	return NewAuthService(repo, []byte(testSecret), 15*time.Minute, time.Hour)
+}
+
+// withMinPasswordCost lowers the bcrypt cost so tests that hash many times
+// (e.g. property tests hitting the unknown-user path) stay fast.
+func withMinPasswordCost(svc AuthService) AuthService {
+	svc.(*authService).passwordCost = bcrypt.MinCost
+	return svc
+}
+
+func TestAuthService_Login_UnknownUserComparesDummyHash(t *testing.T) {
+	svc := NewAuthService(&mockAuthRepository{
+		GetUserByEmailFn: func(context.Context, string) (*User, error) { return nil, nil },
+	}, []byte(testSecret), time.Minute, time.Hour).(*authService)
+
+	_, err := svc.Login(context.Background(), &LoginRequest{Email: "nobody@example.com", Password: "password123"})
+	if !errors.Is(err, apperrors.ErrUnauthorized) || err.Error() != "invalid credentials" {
+		t.Fatalf("Login() error = %v", err)
+	}
+	// The dummy hash must cost the same as a stored hash, otherwise timing leaks existence.
+	cost, err := bcrypt.Cost(svc.dummyPasswordHash())
+	if err != nil {
+		t.Fatalf("dummy hash is not a valid bcrypt hash: %v", err)
+	}
+	if cost != defaultPasswordCost {
+		t.Fatalf("dummy hash cost = %d, want %d", cost, defaultPasswordCost)
+	}
+}
+
+func TestRecordAuthError_RecordsOnlyUnexpectedErrors(t *testing.T) {
+	tests := map[string]struct {
+		err        error
+		wantEvents int
+	}{
+		"validation":          {apperrors.NewValidationError("email is invalid"), 0},
+		"invalid credentials": {newInvalidCredentialsError(), 0},
+		"wrapped conflict":    {fmt.Errorf("authService.Register: %w", apperrors.ErrConflict), 0},
+		"unexpected":          {errors.New("connection refused"), 1},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			recorder := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+			_, span := provider.Tracer("test").Start(context.Background(), "op")
+
+			if got := recordAuthError(span, tt.err); got != tt.err {
+				t.Fatalf("recordAuthError() returned %v, want the same error", got)
+			}
+			span.End()
+
+			ended := recorder.Ended()[0]
+			if ended.Status().Code != codes.Error {
+				t.Errorf("status = %v, want Error", ended.Status().Code)
+			}
+			if len(ended.Events()) != tt.wantEvents {
+				t.Errorf("events = %d, want %d", len(ended.Events()), tt.wantEvents)
+			}
+		})
+	}
 }
 
 func TestAuthService_Register_DuplicateEmail(t *testing.T) {

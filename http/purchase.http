@@ -1,11 +1,11 @@
 # Purchase Entries API
-# Extensão: REST Client (humao.rest-client)
+# Extension: REST Client (humao.rest-client)
 # https://marketplace.visualstudio.com/items?itemName=humao.rest-client
 #
-# Contrato:
-#   purchase_date  → string "YYYY-MM-DD"   (tipo Date, sem horário)
-#   amount         → string decimal        (ex: "174.65", não número float)
-#   category_id    → int64                 (ID de uma categoria global ou do usuário)
+# Contract:
+#   purchase_date  → string "YYYY-MM-DD"   (Date type, no time)
+#   amount         → string decimal        (e.g. "174.65", not a float number)
+#   category_id    → int64                 (ID of a global category or one of the user's)
 #   status         → PENDING | PAID | CANCELED
 #   payment_method → CASH | CREDIT_CARD | DEBIT_CARD | PIX | BANK_TRANSFER | BOLETO
 
@@ -20,13 +20,13 @@
 # AUTHENTICATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-### AUTH — Cadastro → 201
+### AUTH — Register → 201
 
 curl -i -X POST "{{baseUrl}}/auth/register" \
   -H "Content-Type: {{contentType}}" \
   -d '{"email":"{{email}}","password":"{{password}}"}'
 
-### AUTH — Login válido → 200
+### AUTH — Valid login → 200
 
 curl -i -X POST "{{baseUrl}}/auth/login" \
   -H "Content-Type: {{contentType}}" \
@@ -46,35 +46,35 @@ curl -i -X POST "{{baseUrl}}/auth/logout" \
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CATEGORIES  /categories
-# Todas as rotas requerem Bearer token.
+# All routes require a Bearer token.
 # ─────────────────────────────────────────────────────────────────────────────
 
-### CATEGORIES — Listar todas (globais + personalizadas) → 200
+### CATEGORIES — List all (global + personal) → 200
 
 GET {{baseUrl}}/categories
 Authorization: Bearer {{accessToken}}
 
-### CATEGORIES — Criar categoria personalizada → 201
+### CATEGORIES — Create personal category → 201
 
 POST {{baseUrl}}/categories
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Gasolina"
+  "name": "Gas"
 }
 
-### CATEGORIES — Criar categoria com nome duplicado → 409
+### CATEGORIES — Create category with duplicate name → 409
 
 POST {{baseUrl}}/categories
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Gasolina"
+  "name": "Gas"
 }
 
-### CATEGORIES — Criar categoria com nome igual a global → 409
+### CATEGORIES — Create category with a global category's name → 409
 
 POST {{baseUrl}}/categories
 Content-Type: {{contentType}}
@@ -84,47 +84,47 @@ Authorization: Bearer {{accessToken}}
   "name": "Alimentação"
 }
 
-### CATEGORIES — Renomear categoria personalizada → 200
+### CATEGORIES — Rename personal category → 200
 
 PUT {{baseUrl}}/categories/7
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Combustível"
+  "name": "Fuel"
 }
 
-### CATEGORIES — Tentar editar categoria global → 403
+### CATEGORIES — Try to edit a global category → 403
 
 PUT {{baseUrl}}/categories/1
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Comida"
+  "name": "Food"
 }
 
-### CATEGORIES — Deletar categoria personalizada sem uso → 204
+### CATEGORIES — Delete unused personal category → 204
 
 DELETE {{baseUrl}}/categories/7
 Authorization: Bearer {{accessToken}}
 
-### CATEGORIES — Deletar categoria em uso → 409
+### CATEGORIES — Delete category in use → 409
 
 DELETE {{baseUrl}}/categories/5
 Authorization: Bearer {{accessToken}}
 
-### CATEGORIES — Tentar deletar categoria global → 403
+### CATEGORIES — Try to delete a global category → 403
 
 DELETE {{baseUrl}}/categories/1
 Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CREATE  POST /purchases  → 201
-# category_id: use o ID retornado por GET /categories
+# category_id: use an ID returned by GET /categories
 # ─────────────────────────────────────────────────────────────────────────────
 
-### CREATE — Conta de energia com categoria global Moradia (id=3)
+### CREATE — Electricity bill with global category Moradia (id=3)
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -132,14 +132,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Conta de energia",
+  "description":    "Electricity bill",
   "category_id":    3,
   "payment_method": "PIX",
   "amount":         "174.65",
   "status":         "PENDING"
 }
 
-### CREATE — Internet com categoria global Moradia
+### CREATE — Internet with global category Moradia
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -154,7 +154,7 @@ Authorization: Bearer {{accessToken}}
   "status":         "PAID"
 }
 
-### CREATE — Aluguel com categoria global Moradia
+### CREATE — Rent with global category Moradia
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -162,14 +162,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-05",
-  "description":    "Aluguel julho",
+  "description":    "July rent",
   "category_id":    3,
   "payment_method": "BANK_TRANSFER",
   "amount":         "1500.00",
   "status":         "PENDING"
 }
 
-### CREATE — Validação: category_id zero → 422
+### CREATE — Validation: zero category_id → 422
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -177,14 +177,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Teste inválido",
+  "description":    "Invalid test",
   "category_id":    0,
   "payment_method": "PIX",
   "amount":         "50.00",
   "status":         "PENDING"
 }
 
-### CREATE — Validação: category_id inexistente → 404
+### CREATE — Validation: unknown category_id → 404
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -192,14 +192,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Teste inválido",
+  "description":    "Invalid test",
   "category_id":    999999,
   "payment_method": "PIX",
   "amount":         "50.00",
   "status":         "PENDING"
 }
 
-### CREATE — Validação: amount zero → 422
+### CREATE — Validation: zero amount → 422
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -207,14 +207,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Teste inválido",
+  "description":    "Invalid test",
   "category_id":    1,
   "payment_method": "PIX",
   "amount":         "0",
   "status":         "PENDING"
 }
 
-### CREATE — Validação: status inválido → 422
+### CREATE — Validation: invalid status → 422
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -222,14 +222,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Teste inválido",
+  "description":    "Invalid test",
   "category_id":    1,
   "payment_method": "PIX",
   "amount":         "50.00",
   "status":         "INVALIDO"
 }
 
-### CREATE — Validação: payment_method inválido → 422
+### CREATE — Validation: invalid payment_method → 422
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -237,14 +237,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Teste inválido",
+  "description":    "Invalid test",
   "category_id":    1,
   "payment_method": "BITCOIN",
   "amount":         "50.00",
   "status":         "PENDING"
 }
 
-### CREATE — Validação: purchase_date formato errado → 400
+### CREATE — Validation: wrong purchase_date format → 400
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -252,7 +252,7 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01T00:00:00Z",
-  "description":    "Data no formato errado",
+  "description":    "Wrong date format",
   "category_id":    1,
   "payment_method": "PIX",
   "amount":         "50.00",
@@ -263,72 +263,72 @@ Authorization: Bearer {{accessToken}}
 # GET BY ID  GET /purchases/{id}  → 200 | 404
 # ─────────────────────────────────────────────────────────────────────────────
 
-### GET BY ID — Buscar por ID existente
+### GET BY ID — Existing ID
 
 GET {{baseUrl}}/purchases/1
 Authorization: Bearer {{accessToken}}
 
-### GET BY ID — ID inexistente → 404
+### GET BY ID — Unknown ID → 404
 
 GET {{baseUrl}}/purchases/999999
 Authorization: Bearer {{accessToken}}
 
-### GET BY ID — ID inválido (não numérico) → 400
+### GET BY ID — Invalid ID (non-numeric) → 400
 
 GET {{baseUrl}}/purchases/abc
 Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LIST  GET /purchases  → 200
-# Paginação: page (default 1), page_size (default 20, max 100)
+# Pagination: page (default 1), page_size (default 20, max 100)
 # ─────────────────────────────────────────────────────────────────────────────
 
-### LIST — Sem filtros (página 1, 20 itens)
+### LIST — No filters (page 1, 20 items)
 
 GET {{baseUrl}}/purchases
 Authorization: Bearer {{accessToken}}
 
-### LIST — Filtrar por mês e ano
+### LIST — Filter by month and year
 
 GET {{baseUrl}}/purchases?month=7&year=2024
 Authorization: Bearer {{accessToken}}
 
-### LIST — Filtrar por status PENDING
+### LIST — Filter by status PENDING
 
 GET {{baseUrl}}/purchases?status=PENDING
 Authorization: Bearer {{accessToken}}
 
-### LIST — Filtrar por categoria (ID exato)
+### LIST — Filter by category (exact ID)
 
 GET {{baseUrl}}/purchases?category_id=3
 Authorization: Bearer {{accessToken}}
 
-### LIST — Filtrar por forma de pagamento
+### LIST — Filter by payment method
 
 GET {{baseUrl}}/purchases?payment_method=PIX
 Authorization: Bearer {{accessToken}}
 
-### LIST — Filtro combinado: mês + ano + status + categoria
+### LIST — Combined filter: month + year + status + category
 
 GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&category_id=3
 Authorization: Bearer {{accessToken}}
 
-### LIST — Filtro completo com paginação
+### LIST — Full filter with pagination
 
 GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&category_id=3&payment_method=PIX&page=1&page_size=10
 Authorization: Bearer {{accessToken}}
 
-### LIST — Página 2 com 5 itens por página
+### LIST — Page 2 with 5 items per page
 
 GET {{baseUrl}}/purchases?page=2&page_size=5
 Authorization: Bearer {{accessToken}}
 
-### LIST — Validação: mês inválido → 400
+### LIST — Validation: invalid month → 400
 
 GET {{baseUrl}}/purchases?month=13
 Authorization: Bearer {{accessToken}}
 
-### LIST — Validação: page_size acima do limite (>100) → 422
+### LIST — Validation: page_size above limit (>100) → 422
 
 GET {{baseUrl}}/purchases?page_size=200
 Authorization: Bearer {{accessToken}}
@@ -337,7 +337,7 @@ Authorization: Bearer {{accessToken}}
 # UPDATE  PUT /purchases/{id}  → 200 | 404 | 422
 # ─────────────────────────────────────────────────────────────────────────────
 
-### UPDATE — Atualizar lançamento existente
+### UPDATE — Update existing entry
 
 PUT {{baseUrl}}/purchases/1
 Content-Type: {{contentType}}
@@ -345,14 +345,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Conta de energia — atualizado",
+  "description":    "Electricity bill — updated",
   "category_id":    3,
   "payment_method": "CREDIT_CARD",
   "amount":         "180.00",
   "status":         "PAID"
 }
 
-### UPDATE — ID inexistente → 404
+### UPDATE — Unknown ID → 404
 
 PUT {{baseUrl}}/purchases/999999
 Content-Type: {{contentType}}
@@ -360,14 +360,14 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Inexistente",
+  "description":    "Nonexistent",
   "category_id":    1,
   "payment_method": "PIX",
   "amount":         "50.00",
   "status":         "PENDING"
 }
 
-### UPDATE — Validação: amount negativo → 422
+### UPDATE — Validation: negative amount → 422
 
 PUT {{baseUrl}}/purchases/1
 Content-Type: {{contentType}}
@@ -375,7 +375,7 @@ Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
-  "description":    "Valor inválido",
+  "description":    "Invalid amount",
   "category_id":    1,
   "payment_method": "PIX",
   "amount":         "-10.00",
@@ -386,17 +386,17 @@ Authorization: Bearer {{accessToken}}
 # DELETE  DELETE /purchases/{id}  → 204 | 404
 # ─────────────────────────────────────────────────────────────────────────────
 
-### DELETE — Remover lançamento existente → 204
+### DELETE — Remove existing entry → 204
 
 DELETE {{baseUrl}}/purchases/1
 Authorization: Bearer {{accessToken}}
 
-### DELETE — ID inexistente → 404
+### DELETE — Unknown ID → 404
 
 DELETE {{baseUrl}}/purchases/999999
 Authorization: Bearer {{accessToken}}
 
-### DELETE — ID inválido → 400
+### DELETE — Invalid ID → 400
 
 DELETE {{baseUrl}}/purchases/0
 Authorization: Bearer {{accessToken}}

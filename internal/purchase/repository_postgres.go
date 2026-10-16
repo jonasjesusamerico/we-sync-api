@@ -155,7 +155,7 @@ func (r *purchasePostgresRepository) GetByID(ctx context.Context, userID, id int
 		&catUserID,
 		&p.Category.Name,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
 		return nil, nil
 	}
@@ -375,7 +375,7 @@ func (r *purchasePostgresRepository) Update(ctx context.Context, userID, id int6
 		&catUserID,
 		&p.Category.Name,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
 		return nil, nil
 	}

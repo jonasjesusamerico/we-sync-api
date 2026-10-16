@@ -62,7 +62,7 @@ func TestAuthHandler_RegisterSuccess(t *testing.T) {
 func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
 	handler := NewAuthHandler(&mockAuthService{
 		loginFn: func(context.Context, *LoginRequest) (*TokenResponse, error) {
-			return nil, errors.Join(apperrors.ErrUnauthorized, errors.New("credenciais inválidas"))
+			return nil, errors.Join(apperrors.ErrUnauthorized, errors.New("invalid credentials"))
 		},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"user@example.com","password":"wrongpass"}`))
@@ -197,7 +197,7 @@ func TestAuthHandler_Login_InvalidCredentialsMessage(t *testing.T) {
 	})
 	response := assertAPIError(t, serve(handler.Login, `{"email":"user@example.com","password":"wrongpass"}`),
 		http.StatusUnauthorized, httputil.ErrCodeUnauthorized)
-	if response.Message != "credenciais inválidas" {
+	if response.Message != "invalid credentials" {
 		t.Fatalf("message = %q", response.Message)
 	}
 }

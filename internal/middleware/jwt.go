@@ -22,7 +22,7 @@ func JWTWithConfig(secret []byte, issuer, audience string, maxTTL time.Duration)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			if !strings.HasPrefix(header, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")) == "" {
-				httputil.WriteUnauthorized(w, "token de autenticação ausente")
+				httputil.WriteUnauthorized(w, "missing authentication token")
 				return
 			}
 
@@ -36,7 +36,7 @@ func JWTWithConfig(secret []byte, issuer, audience string, maxTTL time.Duration)
 			}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 				jwt.WithIssuer(issuer), jwt.WithAudience(audience))
 			if err != nil || !token.Valid {
-				httputil.WriteUnauthorized(w, "token de autenticação inválido")
+				httputil.WriteUnauthorized(w, "invalid authentication token")
 				return
 			}
 			now := time.Now()
@@ -44,13 +44,13 @@ func JWTWithConfig(secret []byte, issuer, audience string, maxTTL time.Duration)
 				claims.ExpiresAt.Time.Before(now) || !claims.ExpiresAt.Time.After(claims.IssuedAt.Time) ||
 				claims.IssuedAt.Time.After(now.Add(time.Minute)) ||
 				(maxTTL > 0 && claims.ExpiresAt.Time.After(claims.IssuedAt.Time.Add(maxTTL))) {
-				httputil.WriteUnauthorized(w, "token de autenticação inválido")
+				httputil.WriteUnauthorized(w, "invalid authentication token")
 				return
 			}
 
 			userID, err := strconv.ParseInt(claims.Subject, 10, 64)
 			if err != nil || userID <= 0 {
-				httputil.WriteUnauthorized(w, "token de autenticação inválido")
+				httputil.WriteUnauthorized(w, "invalid authentication token")
 				return
 			}
 

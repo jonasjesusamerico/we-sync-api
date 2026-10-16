@@ -1,6 +1,6 @@
--- Categorias predefinidas pelo sistema (user_id IS NULL = global).
--- Disponíveis para todos os usuários autenticados; não podem ser alteradas
--- ou excluídas por usuários via API.
+-- System-defined categories (user_id IS NULL = global).
+-- Available to every authenticated user; they cannot be changed or deleted
+-- by users through the API. Names are user-facing data (pt-BR) on purpose.
 INSERT INTO categories (user_id, name) VALUES
     (NULL, 'Alimentação'),
     (NULL, 'Transporte'),

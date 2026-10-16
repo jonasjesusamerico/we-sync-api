@@ -1,8 +1,8 @@
--- purchase_entries referencia categories(id) via category_id.
--- A tabela categories deve existir antes desta migration (000003).
--- O campo sector foi substituído por category_id nesta versão.
--- A integridade de propriedade (usuário só usa categorias globais ou suas próprias)
--- é garantida pela camada de serviço; o banco garante existência via FK.
+-- purchase_entries references categories(id) through category_id.
+-- The categories table must exist before this migration (000003).
+-- The former sector field was replaced by category_id.
+-- Ownership integrity (a user may only use global categories or their own)
+-- is enforced by the service layer; the database guarantees existence via FK.
 
 CREATE TABLE purchase_entries (
     id             BIGSERIAL      PRIMARY KEY,

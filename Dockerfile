@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     -o app ./cmd/api
 
 
-# Stage 2 - runtime (mínimo possível)
+# Stage 2 - runtime (minimal image)
 FROM gcr.io/distroless/static-debian12
 
 WORKDIR /

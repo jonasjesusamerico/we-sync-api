@@ -1,18 +1,18 @@
--- Tabela de categorias de despesas.
--- user_id IS NULL  → categoria global (predefinida pelo sistema, imutável por usuários).
--- user_id NOT NULL → categoria personalizada, pertence ao usuário indicado.
+-- Expense categories.
+-- user_id IS NULL  → global category (system-defined, immutable for users).
+-- user_id NOT NULL → personal category, owned by the given user.
 --
--- Unicidade de nome (case-insensitive) é garantida por dois índices parciais:
---   1. Globais: unique por lower(name) onde user_id IS NULL.
---   2. Personalizadas: unique por (user_id, lower(name)) onde user_id IS NOT NULL.
+-- Name uniqueness (case-insensitive) is enforced by two partial indexes:
+--   1. Globals: unique on lower(name) where user_id IS NULL.
+--   2. Personal: unique on (user_id, lower(name)) where user_id IS NOT NULL.
 --
--- Adicionalmente, para impedir que um usuário crie uma categoria com nome igual
--- ao de uma categoria global, a validação é aplicada no service. O banco garante
--- a invariante dentro de cada grupo; a aplicação garante entre grupos.
+-- Additionally, to prevent a user from creating a category with the same name
+-- as a global one, validation is applied in the service. The database enforces
+-- the invariant within each group; the application enforces it across groups.
 --
--- Nota: COALESCE(user_id, 0) não pode ser usado em FK de purchase_entries porque
--- user_id = 0 não existe em users. A solução adotada é FK simples em category_id
--- com validação de propriedade na camada de serviço (ver purchase service).
+-- Note: COALESCE(user_id, 0) cannot be used in a purchase_entries FK because
+-- user_id = 0 does not exist in users. The chosen approach is a plain FK on
+-- category_id with ownership validation in the service layer (see purchase service).
 
 CREATE TABLE categories (
     id         BIGSERIAL    PRIMARY KEY,
@@ -22,15 +22,15 @@ CREATE TABLE categories (
     updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
--- Unicidade de globais: dois nomes globais não podem ter o mesmo lower(name).
+-- Global uniqueness: two global names cannot share the same lower(name).
 CREATE UNIQUE INDEX uq_categories_global_name
     ON categories (lower(name))
     WHERE user_id IS NULL;
 
--- Unicidade de personalizadas: mesmo usuário não pode ter dois nomes iguais.
+-- Personal uniqueness: the same user cannot have two equal names.
 CREATE UNIQUE INDEX uq_categories_user_name
     ON categories (user_id, lower(name))
     WHERE user_id IS NOT NULL;
 
--- Índice de suporte para buscas e FK lookups por user_id.
+-- Supporting index for lookups and FK checks by user_id.
 CREATE INDEX idx_categories_user_id ON categories (user_id);

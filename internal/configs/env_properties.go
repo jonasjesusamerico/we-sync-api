@@ -60,7 +60,7 @@ type DatabaseProperties struct {
 }
 
 func LoadProperties() (*Config, error) {
-	// Apenas para carregar caso esteja executando localmente.
+	// Loads .env only when running locally; missing file is not an error.
 	_ = godotenv.Load()
 
 	serverPort, err := getEnv("SERVER_PORT", "8080", false)
@@ -158,10 +158,10 @@ func LoadProperties() (*Config, error) {
 		return nil, err
 	}
 	if len([]byte(jwtSecret)) < 32 {
-		return nil, fmt.Errorf("JWT_SECRET deve ter pelo menos 32 bytes")
+		return nil, fmt.Errorf("JWT_SECRET must be at least 32 bytes")
 	}
 	if jwtSecret == "local-development-jwt-secret-change-before-production-2026" {
-		return nil, fmt.Errorf("JWT_SECRET não pode usar o segredo de desenvolvimento padrão")
+		return nil, fmt.Errorf("JWT_SECRET must not use the default development secret")
 	}
 
 	jwtAccessTokenDuration, err := getEnvAsDuration("JWT_ACCESS_TOKEN_DURATION", "15m", false)
@@ -169,14 +169,14 @@ func LoadProperties() (*Config, error) {
 		return nil, err
 	}
 	if jwtAccessTokenDuration <= 0 || jwtAccessTokenDuration > 24*time.Hour {
-		return nil, fmt.Errorf("JWT_ACCESS_TOKEN_DURATION deve ser positiva e no máximo 24h")
+		return nil, fmt.Errorf("JWT_ACCESS_TOKEN_DURATION must be positive and at most 24h")
 	}
 	jwtRefreshTokenDuration, err := getEnvAsDuration("JWT_REFRESH_TOKEN_DURATION", "168h", false)
 	if err != nil {
 		return nil, err
 	}
 	if jwtRefreshTokenDuration <= 0 || jwtRefreshTokenDuration > 30*24*time.Hour {
-		return nil, fmt.Errorf("JWT_REFRESH_TOKEN_DURATION deve ser positiva e no máximo 720h")
+		return nil, fmt.Errorf("JWT_REFRESH_TOKEN_DURATION must be positive and at most 720h")
 	}
 
 	config := &Config{
@@ -229,7 +229,7 @@ func getEnv(key, fallback string, required bool) (string, error) {
 
 	if value == "" {
 		if required {
-			return "", fmt.Errorf("variável de ambiente obrigatória não encontrada: %s", key)
+			return "", fmt.Errorf("required environment variable not set: %s", key)
 		}
 		return fallback, nil
 	}
@@ -245,7 +245,7 @@ func getEnvAsInt(key string, fallback string, required bool) (int, error) {
 
 	intValue, err := strconv.Atoi(value)
 	if err != nil {
-		return 0, fmt.Errorf("valor inválido para a variável de ambiente %s: %q (esperado inteiro)", key, value)
+		return 0, fmt.Errorf("invalid value for environment variable %s: %q (expected integer)", key, value)
 	}
 
 	return intValue, nil
@@ -259,7 +259,7 @@ func getEnvAsBool(key string, fallback string, required bool) (bool, error) {
 
 	boolValue, err := strconv.ParseBool(value)
 	if err != nil {
-		return false, fmt.Errorf("valor inválido para a variável de ambiente %s: %q (esperado true/false)", key, value)
+		return false, fmt.Errorf("invalid value for environment variable %s: %q (expected true/false)", key, value)
 	}
 
 	return boolValue, nil
@@ -273,7 +273,7 @@ func getEnvAsDuration(key string, fallback string, required bool) (time.Duration
 
 	duration, err := time.ParseDuration(value)
 	if err != nil {
-		return 0, fmt.Errorf("valor inválido para a variável de ambiente %s: %q (esperado duração)", key, value)
+		return 0, fmt.Errorf("invalid value for environment variable %s: %q (expected duration)", key, value)
 	}
 
 	return duration, nil
