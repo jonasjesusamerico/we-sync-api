@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
+	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/middleware"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
@@ -24,6 +25,7 @@ type Handlers struct {
 	Health   *handler.HealthHandler
 	Auth     *auth.AuthHandler
 	Purchase *purchase.PurchaseHandler
+	Category *category.CategoryHandler
 }
 
 // New builds and returns the root HTTP handler.
@@ -85,6 +87,12 @@ func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
 				r.Get("/{id}", h.Purchase.GetByID)
 				r.Put("/{id}", h.Purchase.Update)
 				r.Delete("/{id}", h.Purchase.Delete)
+			})
+			r.Route("/categories", func(r chi.Router) {
+				r.Get("/", h.Category.List)
+				r.Post("/", h.Category.Create)
+				r.Put("/{id}", h.Category.Update)
+				r.Delete("/{id}", h.Category.Delete)
 			})
 		})
 	})

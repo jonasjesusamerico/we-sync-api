@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/shopspring/decimal"
 )
 
@@ -30,8 +31,7 @@ func (s Status) IsValid() bool {
 	return false
 }
 
-// IsValidStatus is a convenience wrapper kept for backwards compatibility with
-// tests that pass a plain string.
+// IsValidStatus is a convenience wrapper kept for backwards compatibility with tests.
 func IsValidStatus(s string) bool { return Status(s).IsValid() }
 
 // ---------------------------------------------------------------------------
@@ -97,31 +97,29 @@ func (d *Date) UnmarshalJSON(b []byte) error {
 
 // Purchase represents a purchase entry record.
 type Purchase struct {
-	ID            int64           `json:"id"`
-	UserID        int64           `json:"user_id"`
-	PurchaseDate  Date            `json:"purchase_date"`
-	Description   string          `json:"description"`
-	Sector        string          `json:"sector"`
-	PaymentMethod PaymentMethod   `json:"payment_method"`
-	Amount        decimal.Decimal `json:"amount"`
-	Status        Status          `json:"status"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID            int64                    `json:"id"`
+	UserID        int64                    `json:"user_id"`
+	PurchaseDate  Date                     `json:"purchase_date"`
+	Description   string                   `json:"description"`
+	Category      category.CategorySummary `json:"category"`
+	PaymentMethod PaymentMethod            `json:"payment_method"`
+	Amount        decimal.Decimal          `json:"amount"`
+	Status        Status                   `json:"status"`
+	CreatedAt     time.Time                `json:"created_at"`
+	UpdatedAt     time.Time                `json:"updated_at"`
 }
 
 // PurchaseRequest holds the input data for creating or updating a purchase entry.
 type PurchaseRequest struct {
 	PurchaseDate  Date            `json:"purchase_date"`
 	Description   string          `json:"description"`
-	Sector        string          `json:"sector"`
+	CategoryID    int64           `json:"category_id"`
 	PaymentMethod PaymentMethod   `json:"payment_method"`
 	Amount        decimal.Decimal `json:"amount"`
 	Status        Status          `json:"status"`
 }
 
 // CreatePurchaseRequest is the input type for the Create operation.
-// Kept as a distinct named type so future divergences from UpdatePurchaseRequest
-// do not require a breaking change.
 type CreatePurchaseRequest struct{ PurchaseRequest }
 
 // UpdatePurchaseRequest is the input type for the Update operation.
@@ -133,7 +131,7 @@ type ListFilter struct {
 	Month         int
 	Year          int
 	Status        Status
-	Sector        string
+	CategoryID    int64
 	PaymentMethod PaymentMethod
 	Page          int
 	PageSize      int

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/httputil"
 	"github.com/shopspring/decimal"
 )
@@ -31,18 +32,33 @@ type mockPurchaseService struct {
 }
 
 func (m *mockPurchaseService) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error) {
+	if m.CreateFn == nil {
+		return nil, nil
+	}
 	return m.CreateFn(ctx, req)
 }
 func (m *mockPurchaseService) GetByID(ctx context.Context, id int64) (*Purchase, error) {
+	if m.GetByIDFn == nil {
+		return nil, nil
+	}
 	return m.GetByIDFn(ctx, id)
 }
 func (m *mockPurchaseService) List(ctx context.Context, filter ListFilter) (*PaginatedResult, error) {
+	if m.ListFn == nil {
+		return &PaginatedResult{Items: []Purchase{}}, nil
+	}
 	return m.ListFn(ctx, filter)
 }
 func (m *mockPurchaseService) Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
+	if m.UpdateFn == nil {
+		return nil, nil
+	}
 	return m.UpdateFn(ctx, id, req)
 }
 func (m *mockPurchaseService) Delete(ctx context.Context, id int64) error {
+	if m.DeleteFn == nil {
+		return nil
+	}
 	return m.DeleteFn(ctx, id)
 }
 
@@ -51,7 +67,7 @@ func samplePurchase() *Purchase {
 		ID:            1,
 		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
 		Description:   "Energy bill",
-		Sector:        "Utilities",
+		Category:      category.CategorySummary{ID: 1, Name: "Moradia", IsGlobal: true},
 		PaymentMethod: PaymentMethodPix,
 		Amount:        decimal.NewFromFloat(174.65),
 		Status:        StatusPending,
@@ -64,7 +80,7 @@ func validCreateBody() string {
 	return `{
 		"purchase_date":  "2024-07-01",
 		"description":    "Energy bill",
-		"sector":         "Utilities",
+		"category_id":    1,
 		"payment_method": "PIX",
 		"amount":         "174.65",
 		"status":         "PENDING"
@@ -107,7 +123,6 @@ func TestHandler_Create_Success(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d", rec.Code)
 	}
-
 	var got Purchase
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -291,7 +306,7 @@ func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/purchases?month=7&year=2024&status=PAID&sector=Utilities&payment_method=PIX&page=2&page_size=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/purchases?month=7&year=2024&status=PAID&category_id=3&payment_method=PIX&page=2&page_size=10", nil)
 	rec := httptest.NewRecorder()
 
 	h.List(rec, req)
@@ -308,8 +323,8 @@ func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 	if capturedFilter.Status != StatusPaid {
 		t.Errorf("expected Status=%q, got %q", StatusPaid, capturedFilter.Status)
 	}
-	if capturedFilter.Sector != "Utilities" {
-		t.Errorf("expected Sector=Utilities, got %q", capturedFilter.Sector)
+	if capturedFilter.CategoryID != 3 {
+		t.Errorf("expected CategoryID=3, got %d", capturedFilter.CategoryID)
 	}
 	if capturedFilter.PaymentMethod != PaymentMethodPix {
 		t.Errorf("expected PaymentMethod=PIX, got %q", capturedFilter.PaymentMethod)
@@ -363,6 +378,26 @@ func TestHandler_Update_NotFound(t *testing.T) {
 	}
 }
 
+func TestHandler_Create_CategoryNotFound(t *testing.T) {
+	h := NewPurchaseHandler(&mockPurchaseService{
+		CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
+			return nil, category.ErrCategoryNotFound
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/purchases", strings.NewReader(validCreateBody()))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+	if apiErr := decodeError(t, rec.Body); apiErr.Message != "category not found" {
+		t.Errorf("expected message %q, got %q", "category not found", apiErr.Message)
+	}
+}
+
 func TestHandler_Update_InvalidJSON(t *testing.T) {
 	h := NewPurchaseHandler(&mockPurchaseService{})
 
@@ -383,9 +418,7 @@ func TestHandler_Update_InvalidJSON(t *testing.T) {
 
 func TestHandler_Delete_Success(t *testing.T) {
 	h := NewPurchaseHandler(&mockPurchaseService{
-		DeleteFn: func(_ context.Context, _ int64) error {
-			return nil
-		},
+		DeleteFn: func(_ context.Context, _ int64) error { return nil },
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/purchases/1", nil)
@@ -401,9 +434,7 @@ func TestHandler_Delete_Success(t *testing.T) {
 
 func TestHandler_Delete_NotFound(t *testing.T) {
 	h := NewPurchaseHandler(&mockPurchaseService{
-		DeleteFn: func(_ context.Context, _ int64) error {
-			return apperrors.ErrNotFound
-		},
+		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrNotFound },
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/purchases/99", nil)

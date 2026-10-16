@@ -3,15 +3,18 @@ package purchase
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 
+	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
 	"github.com/shopspring/decimal"
 )
@@ -44,12 +47,21 @@ func NewPurchaseRepository(db *configs.DB) PurchaseRepository {
 
 // Create inserts a new purchase entry using the write DB and returns the created record.
 func (r *purchasePostgresRepository) Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error) {
+	// Use a CTE to INSERT and then JOIN with categories in one round-trip.
 	const query = `
-		INSERT INTO purchase_entries
-			(user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at)
-		VALUES
-			($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-		RETURNING id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at`
+		WITH inserted AS (
+			INSERT INTO purchase_entries
+				(user_id, category_id, purchase_date, description, payment_method, amount, status, created_at, updated_at)
+			VALUES
+				($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+			RETURNING id, user_id, category_id, purchase_date, description, payment_method, amount, status, created_at, updated_at
+		)
+		SELECT
+			i.id, i.user_id, i.purchase_date, i.description,
+			i.payment_method, i.amount, i.status, i.created_at, i.updated_at,
+			c.id, c.user_id, c.name
+		FROM inserted i
+		JOIN categories c ON c.id = i.category_id`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.insert")
 	defer span.End()
@@ -60,11 +72,12 @@ func (r *purchasePostgresRepository) Create(ctx context.Context, userID int64, r
 
 	var p Purchase
 	var amountStr string
+	var catUserID sql.NullInt64
 	err := r.db.Write.QueryRowContext(ctx, query,
 		userID,
+		req.CategoryID,
 		req.PurchaseDate.Time,
 		req.Description,
-		req.Sector,
 		req.PaymentMethod,
 		req.Amount.String(),
 		req.Status,
@@ -73,19 +86,26 @@ func (r *purchasePostgresRepository) Create(ctx context.Context, userID int64, r
 		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
-		&p.Sector,
 		&p.PaymentMethod,
 		&amountStr,
 		&p.Status,
 		&p.CreatedAt,
 		&p.UpdatedAt,
+		&p.Category.ID,
+		&catUserID,
+		&p.Category.Name,
 	)
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			// category_id was removed after the service validated it.
+			return nil, category.ErrCategoryNotFound
+		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("purchasePostgresRepository.Create: %w", err)
 	}
 
+	p.Category.IsGlobal = !catUserID.Valid
 	p.Amount, err = decimal.NewFromString(amountStr)
 	if err != nil {
 		span.RecordError(err)
@@ -101,9 +121,13 @@ func (r *purchasePostgresRepository) Create(ctx context.Context, userID int64, r
 // Returns (nil, nil) when the record is not found.
 func (r *purchasePostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Purchase, error) {
 	const query = `
-		SELECT id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at
-		FROM   purchase_entries
-		WHERE  id = $1 AND user_id = $2`
+		SELECT
+			pe.id, pe.user_id, pe.purchase_date, pe.description,
+			pe.payment_method, pe.amount, pe.status, pe.created_at, pe.updated_at,
+			c.id, c.user_id, c.name
+		FROM   purchase_entries pe
+		JOIN   categories c ON c.id = pe.category_id
+		WHERE  pe.id = $1 AND pe.user_id = $2`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.select_by_id")
 	defer span.End()
@@ -116,17 +140,20 @@ func (r *purchasePostgresRepository) GetByID(ctx context.Context, userID, id int
 
 	var p Purchase
 	var amountStr string
+	var catUserID sql.NullInt64
 	err := r.db.Read.QueryRowContext(ctx, query, id, userID).Scan(
 		&p.ID,
 		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
-		&p.Sector,
 		&p.PaymentMethod,
 		&amountStr,
 		&p.Status,
 		&p.CreatedAt,
 		&p.UpdatedAt,
+		&p.Category.ID,
+		&catUserID,
+		&p.Category.Name,
 	)
 	if err == sql.ErrNoRows {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
@@ -138,6 +165,7 @@ func (r *purchasePostgresRepository) GetByID(ctx context.Context, userID, id int
 		return nil, fmt.Errorf("purchasePostgresRepository.GetByID: %w", err)
 	}
 
+	p.Category.IsGlobal = !catUserID.Valid
 	p.Amount, err = decimal.NewFromString(amountStr)
 	if err != nil {
 		span.RecordError(err)
@@ -159,32 +187,32 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 	)...)
 
 	args := []any{}
-	conditions := []string{"user_id = $1"}
+	conditions := []string{"pe.user_id = $1"}
 	args = append(args, filter.UserID)
 	argIdx := 2
 
 	if filter.Month > 0 {
-		conditions = append(conditions, fmt.Sprintf("EXTRACT(MONTH FROM purchase_date) = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("EXTRACT(MONTH FROM pe.purchase_date) = $%d", argIdx))
 		args = append(args, filter.Month)
 		argIdx++
 	}
 	if filter.Year > 0 {
-		conditions = append(conditions, fmt.Sprintf("EXTRACT(YEAR FROM purchase_date) = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("EXTRACT(YEAR FROM pe.purchase_date) = $%d", argIdx))
 		args = append(args, filter.Year)
 		argIdx++
 	}
 	if filter.Status != "" {
-		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("pe.status = $%d", argIdx))
 		args = append(args, string(filter.Status))
 		argIdx++
 	}
-	if filter.Sector != "" {
-		conditions = append(conditions, fmt.Sprintf("sector ILIKE $%d", argIdx))
-		args = append(args, "%"+filter.Sector+"%")
+	if filter.CategoryID > 0 {
+		conditions = append(conditions, fmt.Sprintf("pe.category_id = $%d", argIdx))
+		args = append(args, filter.CategoryID)
 		argIdx++
 	}
 	if filter.PaymentMethod != "" {
-		conditions = append(conditions, fmt.Sprintf("payment_method = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("pe.payment_method = $%d", argIdx))
 		args = append(args, string(filter.PaymentMethod))
 		argIdx++
 	}
@@ -197,8 +225,10 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 	ctx, cancel := context.WithTimeout(ctx, dbTimeout)
 	defer cancel()
 
-	// Count total matching rows before applying pagination.
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM purchase_entries %s", where)
+	countQuery := fmt.Sprintf(
+		"SELECT COUNT(*) FROM purchase_entries pe JOIN categories c ON c.id = pe.category_id %s",
+		where,
+	)
 	var total int
 	if err := r.db.Read.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		span.RecordError(err)
@@ -209,10 +239,14 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 	offset := (filter.Page - 1) * filter.PageSize
 
 	dataQuery := fmt.Sprintf(`
-		SELECT id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at
-		FROM   purchase_entries
+		SELECT
+			pe.id, pe.user_id, pe.purchase_date, pe.description,
+			pe.payment_method, pe.amount, pe.status, pe.created_at, pe.updated_at,
+			c.id, c.user_id, c.name
+		FROM   purchase_entries pe
+		JOIN   categories c ON c.id = pe.category_id
 		%s
-		ORDER  BY purchase_date DESC, id DESC
+		ORDER  BY pe.purchase_date DESC, pe.id DESC
 		LIMIT  $%d OFFSET $%d`, where, argIdx, argIdx+1)
 
 	args = append(args, filter.PageSize, offset)
@@ -229,22 +263,26 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 	for rows.Next() {
 		var p Purchase
 		var amountStr string
+		var catUserID sql.NullInt64
 		if err := rows.Scan(
 			&p.ID,
 			&p.UserID,
 			&p.PurchaseDate.Time,
 			&p.Description,
-			&p.Sector,
 			&p.PaymentMethod,
 			&amountStr,
 			&p.Status,
 			&p.CreatedAt,
 			&p.UpdatedAt,
+			&p.Category.ID,
+			&catUserID,
+			&p.Category.Name,
 		); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("purchasePostgresRepository.List scan: %w", err)
 		}
+		p.Category.IsGlobal = !catUserID.Valid
 		p.Amount, err = decimal.NewFromString(amountStr)
 		if err != nil {
 			span.RecordError(err)
@@ -282,17 +320,25 @@ func (r *purchasePostgresRepository) List(ctx context.Context, filter ListFilter
 // Returns (nil, nil) when no row with the given ID exists.
 func (r *purchasePostgresRepository) Update(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) (*Purchase, error) {
 	const query = `
-		UPDATE purchase_entries
-		SET
-			purchase_date  = $1,
-			description    = $2,
-			sector         = $3,
-			payment_method = $4,
-			amount         = $5,
-			status         = $6,
-			updated_at     = NOW()
-		WHERE id = $7 AND user_id = $8
-		RETURNING id, user_id, purchase_date, description, sector, payment_method, amount, status, created_at, updated_at`
+		WITH updated AS (
+			UPDATE purchase_entries
+			SET
+				category_id    = $1,
+				purchase_date  = $2,
+				description    = $3,
+				payment_method = $4,
+				amount         = $5,
+				status         = $6,
+				updated_at     = NOW()
+			WHERE id = $7 AND user_id = $8
+			RETURNING id, user_id, category_id, purchase_date, description, payment_method, amount, status, created_at, updated_at
+		)
+		SELECT
+			u.id, u.user_id, u.purchase_date, u.description,
+			u.payment_method, u.amount, u.status, u.created_at, u.updated_at,
+			c.id, c.user_id, c.name
+		FROM updated u
+		JOIN categories c ON c.id = u.category_id`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.update")
 	defer span.End()
@@ -305,10 +351,11 @@ func (r *purchasePostgresRepository) Update(ctx context.Context, userID, id int6
 
 	var p Purchase
 	var amountStr string
+	var catUserID sql.NullInt64
 	err := r.db.Write.QueryRowContext(ctx, query,
+		req.CategoryID,
 		req.PurchaseDate.Time,
 		req.Description,
-		req.Sector,
 		req.PaymentMethod,
 		req.Amount.String(),
 		req.Status,
@@ -319,23 +366,30 @@ func (r *purchasePostgresRepository) Update(ctx context.Context, userID, id int6
 		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
-		&p.Sector,
 		&p.PaymentMethod,
 		&amountStr,
 		&p.Status,
 		&p.CreatedAt,
 		&p.UpdatedAt,
+		&p.Category.ID,
+		&catUserID,
+		&p.Category.Name,
 	)
 	if err == sql.ErrNoRows {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
 		return nil, nil
 	}
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			// category_id was removed after the service validated it.
+			return nil, category.ErrCategoryNotFound
+		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("purchasePostgresRepository.Update: %w", err)
 	}
 
+	p.Category.IsGlobal = !catUserID.Valid
 	p.Amount, err = decimal.NewFromString(amountStr)
 	if err != nil {
 		span.RecordError(err)
@@ -378,4 +432,10 @@ func (r *purchasePostgresRepository) Delete(ctx context.Context, userID, id int6
 	found := rowsAffected > 0
 	span.SetAttributes(attribute.Bool("db.result.found", found))
 	return found, nil
+}
+
+// isForeignKeyViolation reports whether err is a PostgreSQL foreign key violation (23503).
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }

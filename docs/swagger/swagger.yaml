@@ -1,5 +1,74 @@
 basePath: /api/v1
 definitions:
+  auth.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  auth.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    type: object
+  auth.RegisterRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  auth.RegisterResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: integer
+    type: object
+  auth.TokenResponse:
+    properties:
+      access_token:
+        type: string
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+    type: object
+  category.Category:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      is_global:
+        type: boolean
+      name:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: integer
+    type: object
+  category.CategorySummary:
+    properties:
+      id:
+        type: integer
+      is_global:
+        type: boolean
+      name:
+        type: string
+    type: object
+  category.CreateCategoryRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  category.UpdateCategoryRequest:
+    properties:
+      name:
+        type: string
+    type: object
   httputil.APIError:
     properties:
       code:
@@ -11,15 +80,20 @@ definitions:
     properties:
       amount:
         type: number
+      category_id:
+        type: integer
       description:
         type: string
       payment_method:
-        type: string
+        $ref: '#/definitions/purchase.PaymentMethod'
       purchase_date:
-        type: string
-      sector:
-        type: string
+        $ref: '#/definitions/purchase.Date'
       status:
+        $ref: '#/definitions/purchase.Status'
+    type: object
+  purchase.Date:
+    properties:
+      time.Time:
         type: string
     type: object
   purchase.PaginatedResult:
@@ -37,10 +111,28 @@ definitions:
       total_pages:
         type: integer
     type: object
+  purchase.PaymentMethod:
+    enum:
+    - CASH
+    - CREDIT_CARD
+    - DEBIT_CARD
+    - PIX
+    - BANK_TRANSFER
+    - BOLETO
+    type: string
+    x-enum-varnames:
+    - PaymentMethodCash
+    - PaymentMethodCreditCard
+    - PaymentMethodDebitCard
+    - PaymentMethodPix
+    - PaymentMethodBankTransfer
+    - PaymentMethodBoleto
   purchase.Purchase:
     properties:
       amount:
         type: number
+      category:
+        $ref: '#/definitions/category.CategorySummary'
       created_at:
         type: string
       description:
@@ -48,30 +140,40 @@ definitions:
       id:
         type: integer
       payment_method:
-        type: string
+        $ref: '#/definitions/purchase.PaymentMethod'
       purchase_date:
-        type: string
-      sector:
-        type: string
+        $ref: '#/definitions/purchase.Date'
       status:
-        type: string
+        $ref: '#/definitions/purchase.Status'
       updated_at:
         type: string
+      user_id:
+        type: integer
     type: object
+  purchase.Status:
+    enum:
+    - PENDING
+    - PAID
+    - CANCELED
+    type: string
+    x-enum-varnames:
+    - StatusPending
+    - StatusPaid
+    - StatusCanceled
   purchase.UpdatePurchaseRequest:
     properties:
       amount:
         type: number
+      category_id:
+        type: integer
       description:
         type: string
       payment_method:
-        type: string
+        $ref: '#/definitions/purchase.PaymentMethod'
       purchase_date:
-        type: string
-      sector:
-        type: string
+        $ref: '#/definitions/purchase.Date'
       status:
-        type: string
+        $ref: '#/definitions/purchase.Status'
     type: object
 host: localhost:8080
 info:
@@ -82,6 +184,284 @@ info:
   title: we-sync API
   version: "1.0"
 paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Login credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Authenticate a user
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Revoke a refresh token
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Refresh authentication tokens
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Registration data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/auth.RegisterResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Register a user
+      tags:
+      - auth
+  /categories:
+    get:
+      description: Returns all categories visible to the authenticated user (global
+        + personal).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/category.Category'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: List categories
+      tags:
+      - categories
+    post:
+      consumes:
+      - application/json
+      description: Creates a new personal category for the authenticated user.
+      parameters:
+      - description: Category data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/category.CreateCategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/category.Category'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "409":
+          description: Name already exists
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Create a personal category
+      tags:
+      - categories
+  /categories/{id}:
+    delete:
+      description: Removes a personal category owned by the authenticated user.
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot delete a global category
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "409":
+          description: Category in use by purchase entries
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Delete a personal category
+      tags:
+      - categories
+    put:
+      consumes:
+      - application/json
+      description: Renames a personal category owned by the authenticated user.
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated category data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/category.UpdateCategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/category.Category'
+        "400":
+          description: Invalid request body or ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot modify a global category
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "409":
+          description: Name already exists
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Update a personal category
+      tags:
+      - categories
   /purchases:
     get:
       description: Returns a paginated and filtered list of purchase entries.
@@ -102,10 +482,10 @@ paths:
         in: query
         name: status
         type: string
-      - description: Sector (partial match)
+      - description: Category ID (exact match)
         in: query
-        name: sector
-        type: string
+        name: category_id
+        type: integer
       - description: Payment method
         enum:
         - CASH
@@ -121,7 +501,7 @@ paths:
         in: query
         name: page
         type: integer
-      - description: Items per page (default 20)
+      - description: Items per page (default 20, max 100)
         in: query
         name: page_size
         type: integer
@@ -163,6 +543,10 @@ paths:
             $ref: '#/definitions/purchase.Purchase'
         "400":
           description: Invalid request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Category not found
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":
@@ -263,7 +647,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "404":
-          description: Not found
+          description: Purchase or category not found
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
+	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/configs"
 	"github.com/jonasjesusamerico/we-sync-api/internal/handler"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
@@ -71,8 +72,11 @@ func main() {
 
 	// Purchase entries
 	purchaseRepo := purchase.NewPurchaseRepository(db)
-	purchaseSvc := purchase.NewPurchaseService(purchaseRepo)
+	categoryRepo := category.NewCategoryRepository(db)
+	purchaseSvc := purchase.NewPurchaseService(purchaseRepo, categoryRepo)
 	purchaseHandler := purchase.NewPurchaseHandler(purchaseSvc)
+	categorySvc := category.NewCategoryService(categoryRepo)
+	categoryHandler := category.NewCategoryHandler(categorySvc)
 	authRepo := auth.NewAuthRepository(db)
 	authSvc := auth.NewAuthService(
 		authRepo,
@@ -87,6 +91,7 @@ func main() {
 		Health:   handler.NewHealthHandler(),
 		Auth:     authHandler,
 		Purchase: purchaseHandler,
+		Category: categoryHandler,
 	}
 
 	server := &http.Server{
