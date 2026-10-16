@@ -18,6 +18,429 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/auth/login": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Authenticate a user",
+                "parameters": [
+                    {
+                        "description": "Login credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.TokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Revoke a refresh token",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Refresh authentication tokens",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.TokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/register": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Register a user",
+                "parameters": [
+                    {
+                        "description": "Registration data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.RegisterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/auth.RegisterResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/categories": {
+            "get": {
+                "description": "Returns all categories visible to the authenticated user (global + personal).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "categories"
+                ],
+                "summary": "List categories",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/category.Category"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a new personal category for the authenticated user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "categories"
+                ],
+                "summary": "Create a personal category",
+                "parameters": [
+                    {
+                        "description": "Category data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/category.CreateCategoryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/category.Category"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Name already exists",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/categories/{id}": {
+            "put": {
+                "description": "Renames a personal category owned by the authenticated user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "categories"
+                ],
+                "summary": "Update a personal category",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Category ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updated category data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/category.UpdateCategoryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/category.Category"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body or ID",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot modify a global category",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Name already exists",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Removes a personal category owned by the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "categories"
+                ],
+                "summary": "Delete a personal category",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Category ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Invalid ID",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot delete a global category",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Category in use by purchase entries",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/purchases": {
             "get": {
                 "description": "Returns a paginated and filtered list of purchase entries.",
@@ -53,9 +476,9 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "type": "string",
-                        "description": "Sector (partial match)",
-                        "name": "sector",
+                        "type": "integer",
+                        "description": "Category ID (exact match)",
+                        "name": "category_id",
                         "in": "query"
                     },
                     {
@@ -80,7 +503,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Items per page (default 20)",
+                        "description": "Items per page (default 20, max 100)",
                         "name": "page_size",
                         "in": "query"
                     }
@@ -138,6 +561,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Category not found",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -247,7 +676,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not found",
+                        "description": "Purchase or category not found",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -311,6 +740,114 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "auth.LoginRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.RefreshRequest": {
+            "type": "object",
+            "properties": {
+                "refresh_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.RegisterRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.RegisterResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "auth.TokenResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "type": "string"
+                },
+                "token_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "category.Category": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_global": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "category.CategorySummary": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "is_global": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "category.CreateCategoryRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "category.UpdateCategoryRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "httputil.APIError": {
             "type": "object",
             "properties": {
@@ -328,19 +865,27 @@ const docTemplate = `{
                 "amount": {
                     "type": "number"
                 },
+                "category_id": {
+                    "type": "integer"
+                },
                 "description": {
                     "type": "string"
                 },
                 "payment_method": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.PaymentMethod"
                 },
                 "purchase_date": {
-                    "type": "string"
-                },
-                "sector": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.Date"
                 },
                 "status": {
+                    "$ref": "#/definitions/purchase.Status"
+                }
+            }
+        },
+        "purchase.Date": {
+            "type": "object",
+            "properties": {
+                "time.Time": {
                     "type": "string"
                 }
             }
@@ -368,11 +913,33 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.PaymentMethod": {
+            "type": "string",
+            "enum": [
+                "CASH",
+                "CREDIT_CARD",
+                "DEBIT_CARD",
+                "PIX",
+                "BANK_TRANSFER",
+                "BOLETO"
+            ],
+            "x-enum-varnames": [
+                "PaymentMethodCash",
+                "PaymentMethodCreditCard",
+                "PaymentMethodDebitCard",
+                "PaymentMethodPix",
+                "PaymentMethodBankTransfer",
+                "PaymentMethodBoleto"
+            ]
+        },
         "purchase.Purchase": {
             "type": "object",
             "properties": {
                 "amount": {
                     "type": "number"
+                },
+                "category": {
+                    "$ref": "#/definitions/category.CategorySummary"
                 },
                 "created_at": {
                     "type": "string"
@@ -384,21 +951,34 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "payment_method": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.PaymentMethod"
                 },
                 "purchase_date": {
-                    "type": "string"
-                },
-                "sector": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.Date"
                 },
                 "status": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.Status"
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
                 }
             }
+        },
+        "purchase.Status": {
+            "type": "string",
+            "enum": [
+                "PENDING",
+                "PAID",
+                "CANCELED"
+            ],
+            "x-enum-varnames": [
+                "StatusPending",
+                "StatusPaid",
+                "StatusCanceled"
+            ]
         },
         "purchase.UpdatePurchaseRequest": {
             "type": "object",
@@ -406,20 +986,20 @@ const docTemplate = `{
                 "amount": {
                     "type": "number"
                 },
+                "category_id": {
+                    "type": "integer"
+                },
                 "description": {
                     "type": "string"
                 },
                 "payment_method": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.PaymentMethod"
                 },
                 "purchase_date": {
-                    "type": "string"
-                },
-                "sector": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.Date"
                 },
                 "status": {
-                    "type": "string"
+                    "$ref": "#/definitions/purchase.Status"
                 }
             }
         }

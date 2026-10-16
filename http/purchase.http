@@ -3,10 +3,11 @@
 # https://marketplace.visualstudio.com/items?itemName=humao.rest-client
 #
 # Contrato:
-#   purchase_date → string "YYYY-MM-DD"   (tipo Date, sem horário)
-#   amount        → string decimal        (ex: "174.65", não número float)
-#   status        → PENDING | PAID | CANCELED
-#   payment_method→ CASH | CREDIT_CARD | DEBIT_CARD | PIX | BANK_TRANSFER | BOLETO
+#   purchase_date  → string "YYYY-MM-DD"   (tipo Date, sem horário)
+#   amount         → string decimal        (ex: "174.65", não número float)
+#   category_id    → int64                 (ID de uma categoria global ou do usuário)
+#   status         → PENDING | PAID | CANCELED
+#   payment_method → CASH | CREDIT_CARD | DEBIT_CARD | PIX | BANK_TRANSFER | BOLETO
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
@@ -17,9 +18,6 @@
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AUTHENTICATION
-# Os exemplos abaixo usam curl e podem ser executados no terminal.
-# O logout revoga o refresh token; depois dele, o mesmo token não deve ser
-# aceito novamente pelo endpoint de refresh.
 # ─────────────────────────────────────────────────────────────────────────────
 
 ### AUTH — Cadastro → 201
@@ -29,26 +27,12 @@ curl -i -X POST "{{baseUrl}}/auth/register" \
   -d '{"email":"{{email}}","password":"{{password}}"}'
 
 ### AUTH — Login válido → 200
-# Salve access_token e refresh_token da resposta para os próximos exemplos.
 
 curl -i -X POST "{{baseUrl}}/auth/login" \
   -H "Content-Type: {{contentType}}" \
   -d '{"email":"{{email}}","password":"{{password}}"}'
 
-### AUTH — Login com senha incorreta → 401
-
-curl -i -X POST "{{baseUrl}}/auth/login" \
-  -H "Content-Type: {{contentType}}" \
-  -d '{"email":"{{email}}","password":"senha-incorreta"}'
-
-### AUTH — Login com usuário inexistente → 401
-
-curl -i -X POST "{{baseUrl}}/auth/login" \
-  -H "Content-Type: {{contentType}}" \
-  -d '{"email":"nao-existe@example.com","password":"{{password}}"}'
-
-### AUTH — Refresh válido → 200
-# O refresh é rotacionado. Use o novo refresh_token retornado na próxima chamada.
+### AUTH — Refresh → 200
 
 curl -i -X POST "{{baseUrl}}/auth/refresh" \
   -H "Content-Type: {{contentType}}" \
@@ -60,60 +44,158 @@ curl -i -X POST "{{baseUrl}}/auth/logout" \
   -H "Content-Type: {{contentType}}" \
   -d '{"refresh_token":"{{refreshToken}}"}'
 
-### AUTH — Refresh após logout ou rotação do token antigo → 401
+# ─────────────────────────────────────────────────────────────────────────────
+# CATEGORIES  /categories
+# Todas as rotas requerem Bearer token.
+# ─────────────────────────────────────────────────────────────────────────────
 
-# curl -i -X POST "{{baseUrl}}/auth/refresh" \
-#   -H "Content-Type: {{contentType}}" \
-#   -d '{"refresh_token":"{{refreshToken}}"}'
+### CATEGORIES — Listar todas (globais + personalizadas) → 200
 
-### AUTH — Acesso a rota protegida com access token → 200
+GET {{baseUrl}}/categories
+Authorization: Bearer {{accessToken}}
 
-curl -i -X GET "{{baseUrl}}/purchases" \
-  -H "Authorization: Bearer {{accessToken}}"
+### CATEGORIES — Criar categoria personalizada → 201
+
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Gasolina"
+}
+
+### CATEGORIES — Criar categoria com nome duplicado → 409
+
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Gasolina"
+}
+
+### CATEGORIES — Criar categoria com nome igual a global → 409
+
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Alimentação"
+}
+
+### CATEGORIES — Renomear categoria personalizada → 200
+
+PUT {{baseUrl}}/categories/7
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Combustível"
+}
+
+### CATEGORIES — Tentar editar categoria global → 403
+
+PUT {{baseUrl}}/categories/1
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Comida"
+}
+
+### CATEGORIES — Deletar categoria personalizada sem uso → 204
+
+DELETE {{baseUrl}}/categories/7
+Authorization: Bearer {{accessToken}}
+
+### CATEGORIES — Deletar categoria em uso → 409
+
+DELETE {{baseUrl}}/categories/5
+Authorization: Bearer {{accessToken}}
+
+### CATEGORIES — Tentar deletar categoria global → 403
+
+DELETE {{baseUrl}}/categories/1
+Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CREATE  POST /purchases  → 201
+# category_id: use o ID retornado por GET /categories
 # ─────────────────────────────────────────────────────────────────────────────
 
-### CREATE — Conta de energia (PIX, PENDING)
+### CREATE — Conta de energia com categoria global Moradia (id=3)
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Conta de energia",
-  "sector":         "Utilities",
+  "category_id":    3,
   "payment_method": "PIX",
   "amount":         "174.65",
   "status":         "PENDING"
 }
 
-### CREATE — Internet (BOLETO, PAID)
+### CREATE — Internet com categoria global Moradia
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Internet",
-  "sector":         "Internet",
+  "category_id":    3,
   "payment_method": "BOLETO",
   "amount":         "99.99",
   "status":         "PAID"
 }
 
-### CREATE — Aluguel (BANK_TRANSFER, PENDING)
+### CREATE — Aluguel com categoria global Moradia
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-05",
   "description":    "Aluguel julho",
-  "sector":         "Moradia",
+  "category_id":    3,
   "payment_method": "BANK_TRANSFER",
   "amount":         "1500.00",
+  "status":         "PENDING"
+}
+
+### CREATE — Validação: category_id zero → 422
+
+POST {{baseUrl}}/purchases
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Teste inválido",
+  "category_id":    0,
+  "payment_method": "PIX",
+  "amount":         "50.00",
+  "status":         "PENDING"
+}
+
+### CREATE — Validação: category_id inexistente → 404
+
+POST {{baseUrl}}/purchases
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Teste inválido",
+  "category_id":    999999,
+  "payment_method": "PIX",
+  "amount":         "50.00",
   "status":         "PENDING"
 }
 
@@ -121,11 +203,12 @@ Content-Type: {{contentType}}
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Teste inválido",
-  "sector":         "TI",
+  "category_id":    1,
   "payment_method": "PIX",
   "amount":         "0",
   "status":         "PENDING"
@@ -135,11 +218,12 @@ Content-Type: {{contentType}}
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Teste inválido",
-  "sector":         "TI",
+  "category_id":    1,
   "payment_method": "PIX",
   "amount":         "50.00",
   "status":         "INVALIDO"
@@ -149,25 +233,27 @@ Content-Type: {{contentType}}
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Teste inválido",
-  "sector":         "TI",
+  "category_id":    1,
   "payment_method": "BITCOIN",
   "amount":         "50.00",
   "status":         "PENDING"
 }
 
-### CREATE — Validação: purchase_date com formato errado → 400
+### CREATE — Validação: purchase_date formato errado → 400
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01T00:00:00Z",
   "description":    "Data no formato errado",
-  "sector":         "TI",
+  "category_id":    1,
   "payment_method": "PIX",
   "amount":         "50.00",
   "status":         "PENDING"
@@ -180,17 +266,17 @@ Content-Type: {{contentType}}
 ### GET BY ID — Buscar por ID existente
 
 GET {{baseUrl}}/purchases/1
-Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 ### GET BY ID — ID inexistente → 404
 
 GET {{baseUrl}}/purchases/999999
-Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 ### GET BY ID — ID inválido (não numérico) → 400
 
 GET {{baseUrl}}/purchases/abc
-Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LIST  GET /purchases  → 200
@@ -200,65 +286,67 @@ Content-Type: {{contentType}}
 ### LIST — Sem filtros (página 1, 20 itens)
 
 GET {{baseUrl}}/purchases
+Authorization: Bearer {{accessToken}}
 
 ### LIST — Filtrar por mês e ano
 
 GET {{baseUrl}}/purchases?month=7&year=2024
+Authorization: Bearer {{accessToken}}
 
 ### LIST — Filtrar por status PENDING
 
 GET {{baseUrl}}/purchases?status=PENDING
+Authorization: Bearer {{accessToken}}
 
-### LIST — Filtrar por status PAID
+### LIST — Filtrar por categoria (ID exato)
 
-GET {{baseUrl}}/purchases?status=PAID
-
-### LIST — Filtrar por status CANCELED
-
-GET {{baseUrl}}/purchases?status=CANCELED
-
-### LIST — Filtrar por setor (busca parcial, case-insensitive)
-
-GET {{baseUrl}}/purchases?sector=util
+GET {{baseUrl}}/purchases?category_id=3
+Authorization: Bearer {{accessToken}}
 
 ### LIST — Filtrar por forma de pagamento
 
 GET {{baseUrl}}/purchases?payment_method=PIX
+Authorization: Bearer {{accessToken}}
 
-### LIST — Filtro combinado: mês + ano + status
+### LIST — Filtro combinado: mês + ano + status + categoria
 
-GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING
+GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&category_id=3
+Authorization: Bearer {{accessToken}}
 
 ### LIST — Filtro completo com paginação
 
-GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&sector=Utilities&payment_method=PIX&page=1&page_size=10
+GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&category_id=3&payment_method=PIX&page=1&page_size=10
+Authorization: Bearer {{accessToken}}
 
 ### LIST — Página 2 com 5 itens por página
 
 GET {{baseUrl}}/purchases?page=2&page_size=5
+Authorization: Bearer {{accessToken}}
 
 ### LIST — Validação: mês inválido → 400
 
 GET {{baseUrl}}/purchases?month=13
+Authorization: Bearer {{accessToken}}
 
 ### LIST — Validação: page_size acima do limite (>100) → 422
 
 GET {{baseUrl}}/purchases?page_size=200
+Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UPDATE  PUT /purchases/{id}  → 200 | 404 | 422
-# Substitui todos os campos (full replace, não patch).
 # ─────────────────────────────────────────────────────────────────────────────
 
 ### UPDATE — Atualizar lançamento existente
 
 PUT {{baseUrl}}/purchases/1
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Conta de energia — atualizado",
-  "sector":         "Utilities",
+  "category_id":    3,
   "payment_method": "CREDIT_CARD",
   "amount":         "180.00",
   "status":         "PAID"
@@ -268,11 +356,12 @@ Content-Type: {{contentType}}
 
 PUT {{baseUrl}}/purchases/999999
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Inexistente",
-  "sector":         "TI",
+  "category_id":    1,
   "payment_method": "PIX",
   "amount":         "50.00",
   "status":         "PENDING"
@@ -282,11 +371,12 @@ Content-Type: {{contentType}}
 
 PUT {{baseUrl}}/purchases/1
 Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
 
 {
   "purchase_date":  "2024-07-01",
   "description":    "Valor inválido",
-  "sector":         "TI",
+  "category_id":    1,
   "payment_method": "PIX",
   "amount":         "-10.00",
   "status":         "PENDING"
@@ -299,11 +389,14 @@ Content-Type: {{contentType}}
 ### DELETE — Remover lançamento existente → 204
 
 DELETE {{baseUrl}}/purchases/1
+Authorization: Bearer {{accessToken}}
 
 ### DELETE — ID inexistente → 404
 
 DELETE {{baseUrl}}/purchases/999999
+Authorization: Bearer {{accessToken}}
 
 ### DELETE — ID inválido → 400
 
 DELETE {{baseUrl}}/purchases/0
+Authorization: Bearer {{accessToken}}

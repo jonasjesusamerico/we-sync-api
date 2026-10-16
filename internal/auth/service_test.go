@@ -123,9 +123,12 @@ func TestAuthService_LoginErrorMessageProperty(t *testing.T) {
 		svc := NewAuthService(&mockAuthRepository{
 			GetUserByEmailFn: func(context.Context, string) (*User, error) { return nil, nil },
 		}, []byte(testSecret), time.Minute, time.Hour)
+		// Prefixes guarantee non-empty strings, so the early validation for
+		// blank email/password is never triggered and the path that reaches
+		// the repository (user not found) always returns "credenciais inválidas".
 		_, err := svc.Login(context.Background(), &LoginRequest{
-			Email:    "user-" + rapid.String().Draw(t, "email"),
-			Password: "wrong-" + rapid.String().Draw(t, "password"),
+			Email:    "user@example-" + rapid.StringMatching(`[a-z0-9]+`).Draw(t, "email"),
+			Password: "wrong-" + rapid.StringMatching(`[a-z0-9]+`).Draw(t, "password"),
 		})
 		if err == nil || err.Error() != "credenciais inválidas" {
 			t.Fatalf("error = %v", err)

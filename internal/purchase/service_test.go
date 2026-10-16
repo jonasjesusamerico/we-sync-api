@@ -8,22 +8,66 @@ import (
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
+	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/shopspring/decimal"
 	"pgregory.net/rapid"
 )
 
+// ---------------------------------------------------------------------------
 // helpers
+// ---------------------------------------------------------------------------
+
+func globalCatRepo() *mockCategoryRepository {
+	return &mockCategoryRepository{
+		GetByIDFn: func(_ context.Context, id int64) (*category.Category, error) {
+			return &category.Category{ID: id, UserID: nil, Name: "Alimentação", IsGlobal: true}, nil
+		},
+	}
+}
 
 func validCreateRequest() *CreatePurchaseRequest {
 	return &CreatePurchaseRequest{PurchaseRequest{
 		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
 		Description:   "Energy bill",
-		Sector:        "Utilities",
+		CategoryID:    1,
 		PaymentMethod: PaymentMethodPix,
 		Amount:        decimal.NewFromFloat(174.65),
 		Status:        StatusPending,
 	}}
 }
+
+func validUpdateRequest() *UpdatePurchaseRequest {
+	return &UpdatePurchaseRequest{PurchaseRequest{
+		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
+		Description:   "Energy bill updated",
+		CategoryID:    1,
+		PaymentMethod: PaymentMethodPix,
+		Amount:        decimal.NewFromFloat(200.00),
+		Status:        StatusPaid,
+	}}
+}
+
+func purchaseFromCreate(req *CreatePurchaseRequest) *Purchase {
+	return &Purchase{
+		ID:            1,
+		PurchaseDate:  req.PurchaseDate,
+		Description:   req.Description,
+		Category:      category.CategorySummary{ID: req.CategoryID, Name: "Alimentação", IsGlobal: true},
+		PaymentMethod: req.PaymentMethod,
+		Amount:        req.Amount,
+		Status:        req.Status,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+}
+
+func newSvc(repo PurchaseRepository, catRepo *mockCategoryRepository) PurchaseService {
+	return NewPurchaseService(repo, catRepo)
+}
+
+// ---------------------------------------------------------------------------
+// Unauthorized — operations require user ID in context
+// ---------------------------------------------------------------------------
 
 func TestService_OperationsRequireUserID(t *testing.T) {
 	called := false
@@ -49,7 +93,7 @@ func TestService_OperationsRequireUserID(t *testing.T) {
 			return false, nil
 		},
 	}
-	svc := NewPurchaseService(repo)
+	svc := newSvc(repo, globalCatRepo())
 	if _, err := svc.Create(context.Background(), validCreateRequest()); !errors.Is(err, apperrors.ErrUnauthorized) {
 		t.Errorf("Create() error = %v, want unauthorized", err)
 	}
@@ -77,10 +121,10 @@ func TestService_UserIDAlwaysComesFromContext(t *testing.T) {
 		repo := &mockPurchaseRepository{
 			ListFn: func(_ context.Context, filter ListFilter) (*PaginatedResult, error) {
 				captured = filter.UserID
-				return &PaginatedResult{}, nil
+				return &PaginatedResult{Items: []Purchase{}}, nil
 			},
 		}
-		svc := NewPurchaseService(repo)
+		svc := newSvc(repo, globalCatRepo())
 		_, err := svc.List(auth.WithUserID(context.Background(), userID), ListFilter{UserID: userID + 1})
 		if err != nil {
 			t.Fatalf("List() error = %v", err)
@@ -91,42 +135,19 @@ func TestService_UserIDAlwaysComesFromContext(t *testing.T) {
 	})
 }
 
-func validUpdateRequest() *UpdatePurchaseRequest {
-	return &UpdatePurchaseRequest{PurchaseRequest{
-		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
-		Description:   "Energy bill updated",
-		Sector:        "Utilities",
-		PaymentMethod: PaymentMethodPix,
-		Amount:        decimal.NewFromFloat(200.00),
-		Status:        StatusPaid,
-	}}
-}
-
-func purchaseFromCreate(req *CreatePurchaseRequest) *Purchase {
-	return &Purchase{
-		ID:            1,
-		PurchaseDate:  req.PurchaseDate,
-		Description:   req.Description,
-		Sector:        req.Sector,
-		PaymentMethod: req.PaymentMethod,
-		Amount:        req.Amount,
-		Status:        req.Status,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-}
-
-// --- Create ---
+// ---------------------------------------------------------------------------
+// Create
+// ---------------------------------------------------------------------------
 
 func TestService_Create_Success(t *testing.T) {
 	req := validCreateRequest()
 	expected := purchaseFromCreate(req)
 
-	svc := NewPurchaseService(&mockPurchaseRepository{
+	svc := newSvc(&mockPurchaseRepository{
 		CreateFn: func(_ context.Context, _ int64, r *CreatePurchaseRequest) (*Purchase, error) {
 			return expected, nil
 		},
-	})
+	}, globalCatRepo())
 
 	got, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if err != nil {
@@ -140,9 +161,7 @@ func TestService_Create_Success(t *testing.T) {
 func TestService_Create_MissingPurchaseDate(t *testing.T) {
 	req := validCreateRequest()
 	req.PurchaseDate = Date{}
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -152,33 +171,55 @@ func TestService_Create_MissingPurchaseDate(t *testing.T) {
 func TestService_Create_MissingDescription(t *testing.T) {
 	req := validCreateRequest()
 	req.Description = ""
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
 }
 
-func TestService_Create_MissingSector(t *testing.T) {
+func TestService_Create_MissingCategoryID(t *testing.T) {
 	req := validCreateRequest()
-	req.Sector = ""
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	req.CategoryID = 0
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
-		t.Errorf("expected ErrValidation, got %v", err)
+		t.Errorf("expected ErrValidation for zero category_id, got %v", err)
+	}
+}
+
+func TestService_Create_CategoryNotFound(t *testing.T) {
+	req := validCreateRequest()
+	catRepo := &mockCategoryRepository{
+		GetByIDFn: func(_ context.Context, _ int64) (*category.Category, error) { return nil, nil },
+	}
+	svc := newSvc(&mockPurchaseRepository{}, catRepo)
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	if !errors.Is(err, category.ErrCategoryNotFound) {
+		t.Errorf("expected ErrNotFound for missing category, got %v", err)
+	}
+}
+
+func TestService_Create_CategoryBelongsToAnotherUser(t *testing.T) {
+	req := validCreateRequest()
+	otherUser := int64(99)
+	catRepo := &mockCategoryRepository{
+		GetByIDFn: func(_ context.Context, id int64) (*category.Category, error) {
+			return &category.Category{ID: id, UserID: &otherUser, IsGlobal: false}, nil
+		},
+	}
+	svc := newSvc(&mockPurchaseRepository{}, catRepo)
+	// user 1 tries to use category owned by user 99
+	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
+	if !errors.Is(err, category.ErrCategoryNotFound) {
+		t.Errorf("expected ErrNotFound (no info leak), got %v", err)
 	}
 }
 
 func TestService_Create_InvalidPaymentMethod(t *testing.T) {
 	req := validCreateRequest()
 	req.PaymentMethod = "BITCOIN"
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -188,9 +229,7 @@ func TestService_Create_InvalidPaymentMethod(t *testing.T) {
 func TestService_Create_AmountZero(t *testing.T) {
 	req := validCreateRequest()
 	req.Amount = decimal.Zero
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -200,9 +239,7 @@ func TestService_Create_AmountZero(t *testing.T) {
 func TestService_Create_AmountNegative(t *testing.T) {
 	req := validCreateRequest()
 	req.Amount = decimal.NewFromFloat(-10)
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -212,9 +249,7 @@ func TestService_Create_AmountNegative(t *testing.T) {
 func TestService_Create_InvalidStatus(t *testing.T) {
 	req := validCreateRequest()
 	req.Status = "UNKNOWN"
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
@@ -223,30 +258,26 @@ func TestService_Create_InvalidStatus(t *testing.T) {
 
 func TestService_Create_RepositoryError(t *testing.T) {
 	repoErr := errors.New("db error")
-
-	svc := NewPurchaseService(&mockPurchaseRepository{
+	svc := newSvc(&mockPurchaseRepository{
 		CreateFn: func(_ context.Context, _ int64, _ *CreatePurchaseRequest) (*Purchase, error) {
 			return nil, repoErr
 		},
-	})
-
+	}, globalCatRepo())
 	_, err := svc.Create(auth.WithUserID(context.Background(), 1), validCreateRequest())
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}
 }
 
-// --- GetByID ---
+// ---------------------------------------------------------------------------
+// GetByID
+// ---------------------------------------------------------------------------
 
 func TestService_GetByID_Found(t *testing.T) {
 	want := &Purchase{ID: 42, Description: "Test"}
-
-	svc := NewPurchaseService(&mockPurchaseRepository{
-		GetByIDFn: func(_ context.Context, _ int64, id int64) (*Purchase, error) {
-			return want, nil
-		},
-	})
-
+	svc := newSvc(&mockPurchaseRepository{
+		GetByIDFn: func(_ context.Context, _ int64, id int64) (*Purchase, error) { return want, nil },
+	}, globalCatRepo())
 	got, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -257,12 +288,9 @@ func TestService_GetByID_Found(t *testing.T) {
 }
 
 func TestService_GetByID_NotFound(t *testing.T) {
-	svc := NewPurchaseService(&mockPurchaseRepository{
-		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) {
-			return nil, nil
-		},
-	})
-
+	svc := newSvc(&mockPurchaseRepository{
+		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) { return nil, nil },
+	}, globalCatRepo())
 	_, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 99)
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
@@ -271,32 +299,27 @@ func TestService_GetByID_NotFound(t *testing.T) {
 
 func TestService_GetByID_RepositoryError(t *testing.T) {
 	repoErr := errors.New("connection failed")
-
-	svc := NewPurchaseService(&mockPurchaseRepository{
-		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) {
-			return nil, repoErr
-		},
-	})
-
+	svc := newSvc(&mockPurchaseRepository{
+		GetByIDFn: func(_ context.Context, _ int64, _ int64) (*Purchase, error) { return nil, repoErr },
+	}, globalCatRepo())
 	_, err := svc.GetByID(auth.WithUserID(context.Background(), 1), 1)
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}
 }
 
-// --- List ---
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
 
 func TestService_List_DefaultPagination(t *testing.T) {
 	var capturedFilter ListFilter
-
-	svc := NewPurchaseService(&mockPurchaseRepository{
+	svc := newSvc(&mockPurchaseRepository{
 		ListFn: func(_ context.Context, f ListFilter) (*PaginatedResult, error) {
 			capturedFilter = f
 			return &PaginatedResult{Items: []Purchase{}, Total: 0, Page: f.Page, PageSize: f.PageSize}, nil
 		},
-	})
-
-	// Pass zero values — service must apply defaults.
+	}, globalCatRepo())
 	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -311,14 +334,12 @@ func TestService_List_DefaultPagination(t *testing.T) {
 
 func TestService_List_CustomPagination(t *testing.T) {
 	var capturedFilter ListFilter
-
-	svc := NewPurchaseService(&mockPurchaseRepository{
+	svc := newSvc(&mockPurchaseRepository{
 		ListFn: func(_ context.Context, f ListFilter) (*PaginatedResult, error) {
 			capturedFilter = f
 			return &PaginatedResult{Items: []Purchase{}, Total: 0, Page: f.Page, PageSize: f.PageSize}, nil
 		},
-	})
-
+	}, globalCatRepo())
 	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{Page: 3, PageSize: 5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -332,26 +353,25 @@ func TestService_List_CustomPagination(t *testing.T) {
 }
 
 func TestService_List_PageSizeExceedsMax(t *testing.T) {
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.List(auth.WithUserID(context.Background(), 1), ListFilter{PageSize: MaxPageSize + 1})
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation for page_size > MaxPageSize, got %v", err)
 	}
 }
 
-// --- Update ---
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
 
 func TestService_Update_Success(t *testing.T) {
 	req := validUpdateRequest()
 	want := &Purchase{ID: 1, Description: req.Description}
-
-	svc := NewPurchaseService(&mockPurchaseRepository{
+	svc := newSvc(&mockPurchaseRepository{
 		UpdateFn: func(_ context.Context, _ int64, id int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
 			return want, nil
 		},
-	})
-
+	}, globalCatRepo())
 	got, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -362,12 +382,11 @@ func TestService_Update_Success(t *testing.T) {
 }
 
 func TestService_Update_NotFound(t *testing.T) {
-	svc := NewPurchaseService(&mockPurchaseRepository{
+	svc := newSvc(&mockPurchaseRepository{
 		UpdateFn: func(_ context.Context, _ int64, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
 			return nil, nil
 		},
-	})
-
+	}, globalCatRepo())
 	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 99, validUpdateRequest())
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
@@ -377,36 +396,41 @@ func TestService_Update_NotFound(t *testing.T) {
 func TestService_Update_ValidationError(t *testing.T) {
 	req := validUpdateRequest()
 	req.Amount = decimal.NewFromFloat(-5)
-
-	svc := NewPurchaseService(&mockPurchaseRepository{})
-
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
 	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, req)
 	if !errors.Is(err, apperrors.ErrValidation) {
 		t.Errorf("expected ErrValidation, got %v", err)
 	}
 }
 
-// --- Delete ---
+func TestService_Update_CategoryNotFound(t *testing.T) {
+	catRepo := &mockCategoryRepository{
+		GetByIDFn: func(_ context.Context, _ int64) (*category.Category, error) { return nil, nil },
+	}
+	svc := newSvc(&mockPurchaseRepository{}, catRepo)
+	_, err := svc.Update(auth.WithUserID(context.Background(), 1), 1, validUpdateRequest())
+	if !errors.Is(err, category.ErrCategoryNotFound) {
+		t.Errorf("expected ErrNotFound for missing category, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Delete
+// ---------------------------------------------------------------------------
 
 func TestService_Delete_Success(t *testing.T) {
-	svc := NewPurchaseService(&mockPurchaseRepository{
-		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) {
-			return true, nil
-		},
-	})
-
+	svc := newSvc(&mockPurchaseRepository{
+		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) { return true, nil },
+	}, globalCatRepo())
 	if err := svc.Delete(auth.WithUserID(context.Background(), 1), 1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestService_Delete_NotFound(t *testing.T) {
-	svc := NewPurchaseService(&mockPurchaseRepository{
-		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) {
-			return false, nil
-		},
-	})
-
+	svc := newSvc(&mockPurchaseRepository{
+		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) { return false, nil },
+	}, globalCatRepo())
 	err := svc.Delete(auth.WithUserID(context.Background(), 1), 99)
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
@@ -415,20 +439,18 @@ func TestService_Delete_NotFound(t *testing.T) {
 
 func TestService_Delete_RepositoryError(t *testing.T) {
 	repoErr := errors.New("delete failed")
-
-	svc := NewPurchaseService(&mockPurchaseRepository{
-		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) {
-			return false, repoErr
-		},
-	})
-
+	svc := newSvc(&mockPurchaseRepository{
+		DeleteFn: func(_ context.Context, _ int64, _ int64) (bool, error) { return false, repoErr },
+	}, globalCatRepo())
 	err := svc.Delete(auth.WithUserID(context.Background(), 1), 1)
 	if !errors.Is(err, repoErr) {
 		t.Errorf("expected wrapped repoErr, got %v", err)
 	}
 }
 
-// --- Domain helpers ---
+// ---------------------------------------------------------------------------
+// Domain helpers
+// ---------------------------------------------------------------------------
 
 func TestIsValidStatus(t *testing.T) {
 	valid := []Status{StatusPending, StatusPaid, StatusCanceled}
@@ -437,7 +459,6 @@ func TestIsValidStatus(t *testing.T) {
 			t.Errorf("expected %q to be valid", s)
 		}
 	}
-
 	invalid := []Status{"", "UNKNOWN", "pending", "paid"}
 	for _, s := range invalid {
 		if s.IsValid() {
@@ -456,7 +477,6 @@ func TestIsValidPaymentMethod(t *testing.T) {
 			t.Errorf("expected %q to be valid", p)
 		}
 	}
-
 	invalid := []PaymentMethod{"", "BITCOIN", "cash", "pix"}
 	for _, p := range invalid {
 		if p.IsValid() {

@@ -1,6 +1,6 @@
 module github.com/jonasjesusamerico/we-sync-api
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0

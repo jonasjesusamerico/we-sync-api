@@ -3,7 +3,7 @@ package purchase
 import "context"
 
 // PurchaseRepository is the outbound port for purchase entry persistence.
-// Implementations must use (nil, nil) to signal "not found" on GetByID.
+// Implementations must use (nil, nil) to signal "not found" on GetByID and Update.
 // Delete returns (false, nil) when no row with the given ID exists.
 type PurchaseRepository interface {
 	Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error)

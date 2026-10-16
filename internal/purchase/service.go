@@ -11,6 +11,7 @@ import (
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
+	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/shopspring/decimal"
 )
 
@@ -27,7 +28,8 @@ type PurchaseService interface {
 }
 
 type purchaseService struct {
-	repo PurchaseRepository
+	repo         PurchaseRepository
+	categoryRepo category.CategoryRepository
 
 	// Business metrics — recorded after each successful mutation.
 	purchasesCreated metric.Int64Counter
@@ -35,9 +37,9 @@ type purchaseService struct {
 	purchasesDeleted metric.Int64Counter
 }
 
-// NewPurchaseService creates a new PurchaseService backed by the given repository.
-// It registers the business metrics against the global MeterProvider.
-func NewPurchaseService(repo PurchaseRepository) PurchaseService {
+// NewPurchaseService creates a new PurchaseService backed by the given repositories.
+// categoryRepo is used to validate that a category_id is accessible to the user.
+func NewPurchaseService(repo PurchaseRepository, categoryRepo category.CategoryRepository) PurchaseService {
 	meter := otel.Meter(meterName)
 
 	purchasesCreated, _ := meter.Int64Counter(
@@ -58,6 +60,7 @@ func NewPurchaseService(repo PurchaseRepository) PurchaseService {
 
 	return &purchaseService{
 		repo:             repo,
+		categoryRepo:     categoryRepo,
 		purchasesCreated: purchasesCreated,
 		purchasesUpdated: purchasesUpdated,
 		purchasesDeleted: purchasesDeleted,
@@ -77,6 +80,10 @@ func (s *purchaseService) Create(ctx context.Context, req *CreatePurchaseRequest
 		return nil, apperrors.NewValidationError("request is required")
 	}
 	if err := validateRequest(&req.PurchaseRequest); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if err := s.validateCategoryAccess(ctx, req.CategoryID, userID); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
@@ -131,8 +138,6 @@ func (s *purchaseService) GetByID(ctx context.Context, id int64) (*Purchase, err
 }
 
 // List returns a paginated and filtered list of purchase entries.
-// Applies default values: Page=1, PageSize=20 when not provided.
-// Enforces a maximum of MaxPageSize items per page.
 func (s *purchaseService) List(ctx context.Context, filter ListFilter) (*PaginatedResult, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.List")
 	defer span.End()
@@ -191,6 +196,10 @@ func (s *purchaseService) Update(ctx context.Context, id int64, req *UpdatePurch
 		return nil, apperrors.NewValidationError("request is required")
 	}
 	if err := validateRequest(&req.PurchaseRequest); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if err := s.validateCategoryAccess(ctx, req.CategoryID, userID); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
@@ -257,8 +266,8 @@ func validateRequest(req *PurchaseRequest) error {
 	if req.Description == "" {
 		return apperrors.NewValidationError("description is required")
 	}
-	if req.Sector == "" {
-		return apperrors.NewValidationError("sector is required")
+	if req.CategoryID <= 0 {
+		return apperrors.NewValidationError("category_id must be a positive integer")
 	}
 	if req.PaymentMethod == "" {
 		return apperrors.NewValidationError("payment_method is required")
@@ -281,6 +290,19 @@ func validateRequest(req *PurchaseRequest) error {
 			req.Status,
 		)
 	}
+	return nil
+}
 
+// validateCategoryAccess ensures the category exists and is accessible by userID.
+// Returns category.ErrCategoryNotFound when the category does not exist or belongs to
+// another user, so existence of other users' categories is never leaked.
+func (s *purchaseService) validateCategoryAccess(ctx context.Context, categoryID, userID int64) error {
+	cat, err := s.categoryRepo.GetByID(ctx, categoryID)
+	if err != nil {
+		return fmt.Errorf("purchaseService.validateCategoryAccess: %w", err)
+	}
+	if cat == nil || !cat.AccessibleBy(userID) {
+		return category.ErrCategoryNotFound
+	}
 	return nil
 }
