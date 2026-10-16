@@ -9,6 +9,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 	"github.com/shopspring/decimal"
 	"pgregory.net/rapid"
 )
@@ -25,25 +26,33 @@ func globalCatRepo() *mockCategoryLookup {
 	}
 }
 
+func globalPaymentMethodLookup() *mockPaymentMethodLookup {
+	return &mockPaymentMethodLookup{
+		GetByIDFn: func(_ context.Context, id int64) (*paymentmethod.PaymentMethod, error) {
+			return &paymentmethod.PaymentMethod{ID: id, UserID: nil, Name: "Pix", IsGlobal: true}, nil
+		},
+	}
+}
+
 func validCreateRequest() *CreatePurchaseRequest {
 	return &CreatePurchaseRequest{PurchaseRequest{
-		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
-		Description:   "Energy bill",
-		CategoryID:    1,
-		PaymentMethod: PaymentMethodPix,
-		Amount:        decimal.NewFromFloat(174.65),
-		Status:        StatusPending,
+		PurchaseDate:    Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
+		Description:     "Energy bill",
+		CategoryID:      1,
+		PaymentMethodID: 1,
+		Amount:          decimal.NewFromFloat(174.65),
+		Status:          StatusPending,
 	}}
 }
 
 func validUpdateRequest() *UpdatePurchaseRequest {
 	return &UpdatePurchaseRequest{PurchaseRequest{
-		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
-		Description:   "Energy bill updated",
-		CategoryID:    1,
-		PaymentMethod: PaymentMethodPix,
-		Amount:        decimal.NewFromFloat(200.00),
-		Status:        StatusPaid,
+		PurchaseDate:    Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
+		Description:     "Energy bill updated",
+		CategoryID:      1,
+		PaymentMethodID: 1,
+		Amount:          decimal.NewFromFloat(200.00),
+		Status:          StatusPaid,
 	}}
 }
 
@@ -53,7 +62,7 @@ func purchaseFromCreate(req *CreatePurchaseRequest) *Purchase {
 		PurchaseDate:  req.PurchaseDate,
 		Description:   req.Description,
 		Category:      category.CategorySummary{ID: req.CategoryID, Name: "Alimentação", IsGlobal: true},
-		PaymentMethod: req.PaymentMethod,
+		PaymentMethod: paymentmethod.PaymentMethodSummary{ID: req.PaymentMethodID, Name: "Pix", IsGlobal: true},
 		Amount:        req.Amount,
 		Status:        req.Status,
 		CreatedAt:     time.Now(),
@@ -61,8 +70,9 @@ func purchaseFromCreate(req *CreatePurchaseRequest) *Purchase {
 	}
 }
 
+// newSvc builds a Service whose payment method lookup always resolves to a global entry.
 func newSvc(repo Repository, catRepo *mockCategoryLookup) *Service {
-	return NewService(repo, catRepo)
+	return NewService(repo, catRepo, globalPaymentMethodLookup())
 }
 
 // ---------------------------------------------------------------------------
@@ -216,13 +226,69 @@ func TestService_Create_CategoryBelongsToAnotherUser(t *testing.T) {
 	}
 }
 
-func TestService_Create_InvalidPaymentMethod(t *testing.T) {
-	req := validCreateRequest()
-	req.PaymentMethod = "BITCOIN"
-	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
-	_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
-	if !errors.Is(err, apperrors.ErrValidation) {
-		t.Errorf("expected ErrValidation, got %v", err)
+func TestService_Create_InvalidPaymentMethodID(t *testing.T) {
+	for _, id := range []int64{0, -1} {
+		req := validCreateRequest()
+		req.PaymentMethodID = id
+		svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
+		_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
+		if !errors.Is(err, apperrors.ErrValidation) {
+			t.Errorf("payment_method_id=%d: expected ErrValidation, got %v", id, err)
+		}
+	}
+}
+
+func TestService_Create_PaymentMethodNotFound(t *testing.T) {
+	pmRepo := &mockPaymentMethodLookup{
+		GetByIDFn: func(_ context.Context, _ int64) (*paymentmethod.PaymentMethod, error) { return nil, nil },
+	}
+	svc := NewService(&mockPurchaseRepository{}, globalCatRepo(), pmRepo)
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), validCreateRequest())
+	if !errors.Is(err, paymentmethod.ErrPaymentMethodNotFound) {
+		t.Errorf("expected ErrPaymentMethodNotFound, got %v", err)
+	}
+}
+
+func TestService_Create_PaymentMethodBelongsToAnotherUser(t *testing.T) {
+	otherUser := int64(99)
+	pmRepo := &mockPaymentMethodLookup{
+		GetByIDFn: func(_ context.Context, id int64) (*paymentmethod.PaymentMethod, error) {
+			return &paymentmethod.PaymentMethod{ID: id, UserID: &otherUser, IsGlobal: false}, nil
+		},
+	}
+	called := false
+	repo := &mockPurchaseRepository{
+		CreateFn: func(context.Context, int64, *CreatePurchaseRequest) (*Purchase, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	svc := NewService(repo, globalCatRepo(), pmRepo)
+	// user 1 tries to use a payment method owned by user 99
+	_, err := svc.Create(identity.WithUserID(context.Background(), 1), validCreateRequest())
+	if !errors.Is(err, paymentmethod.ErrPaymentMethodNotFound) {
+		t.Errorf("expected ErrPaymentMethodNotFound (no info leak), got %v", err)
+	}
+	if called {
+		t.Error("repository must not be called when the payment method is not accessible")
+	}
+}
+
+func TestService_Create_OwnPersonalPaymentMethod(t *testing.T) {
+	owner := int64(1)
+	pmRepo := &mockPaymentMethodLookup{
+		GetByIDFn: func(_ context.Context, id int64) (*paymentmethod.PaymentMethod, error) {
+			return &paymentmethod.PaymentMethod{ID: id, UserID: &owner, Name: "Nubank", IsGlobal: false}, nil
+		},
+	}
+	repo := &mockPurchaseRepository{
+		CreateFn: func(_ context.Context, _ int64, req *CreatePurchaseRequest) (*Purchase, error) {
+			return purchaseFromCreate(req), nil
+		},
+	}
+	svc := NewService(repo, globalCatRepo(), pmRepo)
+	if _, err := svc.Create(identity.WithUserID(context.Background(), owner), validCreateRequest()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -414,6 +480,17 @@ func TestService_Update_CategoryNotFound(t *testing.T) {
 	}
 }
 
+func TestService_Update_PaymentMethodNotFound(t *testing.T) {
+	pmRepo := &mockPaymentMethodLookup{
+		GetByIDFn: func(_ context.Context, _ int64) (*paymentmethod.PaymentMethod, error) { return nil, nil },
+	}
+	svc := NewService(&mockPurchaseRepository{}, globalCatRepo(), pmRepo)
+	_, err := svc.Update(identity.WithUserID(context.Background(), 1), 1, validUpdateRequest())
+	if !errors.Is(err, paymentmethod.ErrPaymentMethodNotFound) {
+		t.Errorf("expected ErrPaymentMethodNotFound, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Delete
 // ---------------------------------------------------------------------------
@@ -463,24 +540,6 @@ func TestIsValidStatus(t *testing.T) {
 	for _, s := range invalid {
 		if s.IsValid() {
 			t.Errorf("expected %q to be invalid", s)
-		}
-	}
-}
-
-func TestIsValidPaymentMethod(t *testing.T) {
-	valid := []PaymentMethod{
-		PaymentMethodCash, PaymentMethodCreditCard, PaymentMethodDebitCard,
-		PaymentMethodPix, PaymentMethodBankTransfer, PaymentMethodBoleto,
-	}
-	for _, p := range valid {
-		if !p.IsValid() {
-			t.Errorf("expected %q to be valid", p)
-		}
-	}
-	invalid := []PaymentMethod{"", "BITCOIN", "cash", "pix"}
-	for _, p := range invalid {
-		if p.IsValid() {
-			t.Errorf("expected %q to be invalid", p)
 		}
 	}
 }

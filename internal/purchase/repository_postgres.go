@@ -16,6 +16,7 @@ import (
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/database"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 	"github.com/shopspring/decimal"
 )
 
@@ -51,21 +52,23 @@ func NewRepository(db *database.DB) *PostgresRepository {
 
 // Create inserts a new purchase entry using the write DB and returns the created record.
 func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error) {
-	// Use a CTE to INSERT and then JOIN with categories in one round-trip.
+	// Use a CTE to INSERT and then JOIN with categories and payment methods in one round-trip.
 	const query = `
 		WITH inserted AS (
 			INSERT INTO purchase_entries
-				(user_id, category_id, purchase_date, description, payment_method, amount, status, created_at, updated_at)
+				(user_id, category_id, purchase_date, description, payment_method_id, amount, status, created_at, updated_at)
 			VALUES
 				($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-			RETURNING id, user_id, category_id, purchase_date, description, payment_method, amount, status, created_at, updated_at
+			RETURNING id, user_id, category_id, purchase_date, description, payment_method_id, amount, status, created_at, updated_at
 		)
 		SELECT
 			i.id, i.user_id, i.purchase_date, i.description,
-			i.payment_method, i.amount, i.status, i.created_at, i.updated_at,
-			c.id, c.user_id, c.name
+			i.amount, i.status, i.created_at, i.updated_at,
+			c.id, c.user_id, c.name,
+			pm.id, pm.user_id, pm.name
 		FROM inserted i
-		JOIN categories c ON c.id = i.category_id`
+		JOIN categories c ON c.id = i.category_id
+		JOIN payment_methods pm ON pm.id = i.payment_method_id`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.insert")
 	defer span.End()
@@ -76,13 +79,13 @@ func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *Crea
 
 	var p Purchase
 	var amountStr string
-	var catUserID sql.NullInt64
+	var catUserID, pmUserID sql.NullInt64
 	err := r.db.Write.QueryRowContext(ctx, query,
 		userID,
 		req.CategoryID,
 		req.PurchaseDate.Time,
 		req.Description,
-		req.PaymentMethod,
+		req.PaymentMethodID,
 		req.Amount.String(),
 		req.Status,
 	).Scan(
@@ -90,7 +93,6 @@ func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *Crea
 		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
-		&p.PaymentMethod,
 		&amountStr,
 		&p.Status,
 		&p.CreatedAt,
@@ -98,11 +100,13 @@ func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *Crea
 		&p.Category.ID,
 		&catUserID,
 		&p.Category.Name,
+		&p.PaymentMethod.ID,
+		&pmUserID,
+		&p.PaymentMethod.Name,
 	)
 	if err != nil {
-		if isForeignKeyViolation(err) {
-			// category_id was removed after the service validated it.
-			return nil, category.ErrCategoryNotFound
+		if notFound := referenceNotFound(err); notFound != nil {
+			return nil, notFound
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -110,6 +114,7 @@ func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *Crea
 	}
 
 	p.Category.IsGlobal = !catUserID.Valid
+	p.PaymentMethod.IsGlobal = !pmUserID.Valid
 	p.Amount, err = decimal.NewFromString(amountStr)
 	if err != nil {
 		span.RecordError(err)
@@ -127,10 +132,12 @@ func (r *PostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Pu
 	const query = `
 		SELECT
 			pe.id, pe.user_id, pe.purchase_date, pe.description,
-			pe.payment_method, pe.amount, pe.status, pe.created_at, pe.updated_at,
-			c.id, c.user_id, c.name
+			pe.amount, pe.status, pe.created_at, pe.updated_at,
+			c.id, c.user_id, c.name,
+			pm.id, pm.user_id, pm.name
 		FROM   purchase_entries pe
 		JOIN   categories c ON c.id = pe.category_id
+		JOIN   payment_methods pm ON pm.id = pe.payment_method_id
 		WHERE  pe.id = $1 AND pe.user_id = $2`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.select_by_id")
@@ -144,13 +151,12 @@ func (r *PostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Pu
 
 	var p Purchase
 	var amountStr string
-	var catUserID sql.NullInt64
+	var catUserID, pmUserID sql.NullInt64
 	err := r.db.Read.QueryRowContext(ctx, query, id, userID).Scan(
 		&p.ID,
 		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
-		&p.PaymentMethod,
 		&amountStr,
 		&p.Status,
 		&p.CreatedAt,
@@ -158,6 +164,9 @@ func (r *PostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Pu
 		&p.Category.ID,
 		&catUserID,
 		&p.Category.Name,
+		&p.PaymentMethod.ID,
+		&pmUserID,
+		&p.PaymentMethod.Name,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
@@ -170,6 +179,7 @@ func (r *PostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Pu
 	}
 
 	p.Category.IsGlobal = !catUserID.Valid
+	p.PaymentMethod.IsGlobal = !pmUserID.Valid
 	p.Amount, err = decimal.NewFromString(amountStr)
 	if err != nil {
 		span.RecordError(err)
@@ -215,9 +225,9 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 		args = append(args, filter.CategoryID)
 		argIdx++
 	}
-	if filter.PaymentMethod != "" {
-		conditions = append(conditions, fmt.Sprintf("pe.payment_method = $%d", argIdx))
-		args = append(args, string(filter.PaymentMethod))
+	if filter.PaymentMethodID > 0 {
+		conditions = append(conditions, fmt.Sprintf("pe.payment_method_id = $%d", argIdx))
+		args = append(args, filter.PaymentMethodID)
 		argIdx++
 	}
 
@@ -245,10 +255,12 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 	dataQuery := fmt.Sprintf(`
 		SELECT
 			pe.id, pe.user_id, pe.purchase_date, pe.description,
-			pe.payment_method, pe.amount, pe.status, pe.created_at, pe.updated_at,
-			c.id, c.user_id, c.name
+			pe.amount, pe.status, pe.created_at, pe.updated_at,
+			c.id, c.user_id, c.name,
+			pm.id, pm.user_id, pm.name
 		FROM   purchase_entries pe
 		JOIN   categories c ON c.id = pe.category_id
+		JOIN   payment_methods pm ON pm.id = pe.payment_method_id
 		%s
 		ORDER  BY pe.purchase_date DESC, pe.id DESC
 		LIMIT  $%d OFFSET $%d`, where, argIdx, argIdx+1)
@@ -267,13 +279,12 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 	for rows.Next() {
 		var p Purchase
 		var amountStr string
-		var catUserID sql.NullInt64
+		var catUserID, pmUserID sql.NullInt64
 		if err := rows.Scan(
 			&p.ID,
 			&p.UserID,
 			&p.PurchaseDate.Time,
 			&p.Description,
-			&p.PaymentMethod,
 			&amountStr,
 			&p.Status,
 			&p.CreatedAt,
@@ -281,12 +292,16 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 			&p.Category.ID,
 			&catUserID,
 			&p.Category.Name,
+			&p.PaymentMethod.ID,
+			&pmUserID,
+			&p.PaymentMethod.Name,
 		); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("purchasePostgresRepository.List scan: %w", err)
 		}
 		p.Category.IsGlobal = !catUserID.Valid
+		p.PaymentMethod.IsGlobal = !pmUserID.Valid
 		p.Amount, err = decimal.NewFromString(amountStr)
 		if err != nil {
 			span.RecordError(err)
@@ -330,19 +345,21 @@ func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *
 				category_id    = $1,
 				purchase_date  = $2,
 				description    = $3,
-				payment_method = $4,
+				payment_method_id = $4,
 				amount         = $5,
 				status         = $6,
 				updated_at     = NOW()
 			WHERE id = $7 AND user_id = $8
-			RETURNING id, user_id, category_id, purchase_date, description, payment_method, amount, status, created_at, updated_at
+			RETURNING id, user_id, category_id, purchase_date, description, payment_method_id, amount, status, created_at, updated_at
 		)
 		SELECT
 			u.id, u.user_id, u.purchase_date, u.description,
-			u.payment_method, u.amount, u.status, u.created_at, u.updated_at,
-			c.id, c.user_id, c.name
+			u.amount, u.status, u.created_at, u.updated_at,
+			c.id, c.user_id, c.name,
+			pm.id, pm.user_id, pm.name
 		FROM updated u
-		JOIN categories c ON c.id = u.category_id`
+		JOIN categories c ON c.id = u.category_id
+		JOIN payment_methods pm ON pm.id = u.payment_method_id`
 
 	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.update")
 	defer span.End()
@@ -355,12 +372,12 @@ func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *
 
 	var p Purchase
 	var amountStr string
-	var catUserID sql.NullInt64
+	var catUserID, pmUserID sql.NullInt64
 	err := r.db.Write.QueryRowContext(ctx, query,
 		req.CategoryID,
 		req.PurchaseDate.Time,
 		req.Description,
-		req.PaymentMethod,
+		req.PaymentMethodID,
 		req.Amount.String(),
 		req.Status,
 		id,
@@ -370,7 +387,6 @@ func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *
 		&p.UserID,
 		&p.PurchaseDate.Time,
 		&p.Description,
-		&p.PaymentMethod,
 		&amountStr,
 		&p.Status,
 		&p.CreatedAt,
@@ -378,15 +394,17 @@ func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *
 		&p.Category.ID,
 		&catUserID,
 		&p.Category.Name,
+		&p.PaymentMethod.ID,
+		&pmUserID,
+		&p.PaymentMethod.Name,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		span.SetAttributes(attribute.Bool("db.result.found", false))
 		return nil, nil
 	}
 	if err != nil {
-		if isForeignKeyViolation(err) {
-			// category_id was removed after the service validated it.
-			return nil, category.ErrCategoryNotFound
+		if notFound := referenceNotFound(err); notFound != nil {
+			return nil, notFound
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -394,6 +412,7 @@ func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *
 	}
 
 	p.Category.IsGlobal = !catUserID.Valid
+	p.PaymentMethod.IsGlobal = !pmUserID.Valid
 	p.Amount, err = decimal.NewFromString(amountStr)
 	if err != nil {
 		span.RecordError(err)
@@ -438,8 +457,19 @@ func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) (bool
 	return found, nil
 }
 
-// isForeignKeyViolation reports whether err is a PostgreSQL foreign key violation (23503).
-func isForeignKeyViolation(err error) bool {
+// paymentMethodFKConstraint is the payment_method_id FK name set in 000006_create_payment_methods.
+const paymentMethodFKConstraint = "fk_purchase_entries_payment_method"
+
+// referenceNotFound maps a PostgreSQL foreign key violation (23503) to the not-found
+// error of the referenced domain: the category or payment method was removed after
+// the service validated it. Returns nil when err is not a foreign key violation.
+func referenceNotFound(err error) error {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+		return nil
+	}
+	if pgErr.ConstraintName == paymentMethodFKConstraint {
+		return paymentmethod.ErrPaymentMethodNotFound
+	}
+	return category.ErrCategoryNotFound
 }

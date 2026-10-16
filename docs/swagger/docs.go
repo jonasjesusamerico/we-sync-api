@@ -441,6 +441,246 @@ const docTemplate = `{
                 }
             }
         },
+        "/payment-methods": {
+            "get": {
+                "description": "Returns all payment methods visible to the authenticated user (global + personal).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payment-methods"
+                ],
+                "summary": "List payment methods",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/paymentmethod.PaymentMethod"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a new personal payment method for the authenticated user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payment-methods"
+                ],
+                "summary": "Create a personal payment method",
+                "parameters": [
+                    {
+                        "description": "PaymentMethod data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/paymentmethod.CreatePaymentMethodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/paymentmethod.PaymentMethod"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Name already exists",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/payment-methods/{id}": {
+            "put": {
+                "description": "Renames a personal payment method owned by the authenticated user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payment-methods"
+                ],
+                "summary": "Update a personal payment method",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment method ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updated payment method data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/paymentmethod.UpdatePaymentMethodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/paymentmethod.PaymentMethod"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body or ID",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot modify a global payment method",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Name already exists",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Removes a personal payment method owned by the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payment-methods"
+                ],
+                "summary": "Delete a personal payment method",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment method ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Invalid ID",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot delete a global payment method",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "PaymentMethod in use by purchase entries",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/purchases": {
             "get": {
                 "description": "Returns a paginated and filtered list of purchase entries.",
@@ -482,17 +722,9 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "enum": [
-                            "CASH",
-                            "CREDIT_CARD",
-                            "DEBIT_CARD",
-                            "PIX",
-                            "BANK_TRANSFER",
-                            "BOLETO"
-                        ],
-                        "type": "string",
-                        "description": "Payment method",
-                        "name": "payment_method",
+                        "type": "integer",
+                        "description": "Payment method ID (exact match)",
+                        "name": "payment_method_id",
                         "in": "query"
                     },
                     {
@@ -566,7 +798,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Category not found",
+                        "description": "Category or payment method not found",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -676,7 +908,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Purchase or category not found",
+                        "description": "Purchase, category or payment method not found",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -859,6 +1091,59 @@ const docTemplate = `{
                 }
             }
         },
+        "paymentmethod.CreatePaymentMethodRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "paymentmethod.PaymentMethod": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_global": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "paymentmethod.PaymentMethodSummary": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "is_global": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "paymentmethod.UpdatePaymentMethodRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "purchase.CreatePurchaseRequest": {
             "type": "object",
             "properties": {
@@ -871,8 +1156,8 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
-                "payment_method": {
-                    "$ref": "#/definitions/purchase.PaymentMethod"
+                "payment_method_id": {
+                    "type": "integer"
                 },
                 "purchase_date": {
                     "$ref": "#/definitions/purchase.Date"
@@ -913,25 +1198,6 @@ const docTemplate = `{
                 }
             }
         },
-        "purchase.PaymentMethod": {
-            "type": "string",
-            "enum": [
-                "CASH",
-                "CREDIT_CARD",
-                "DEBIT_CARD",
-                "PIX",
-                "BANK_TRANSFER",
-                "BOLETO"
-            ],
-            "x-enum-varnames": [
-                "PaymentMethodCash",
-                "PaymentMethodCreditCard",
-                "PaymentMethodDebitCard",
-                "PaymentMethodPix",
-                "PaymentMethodBankTransfer",
-                "PaymentMethodBoleto"
-            ]
-        },
         "purchase.Purchase": {
             "type": "object",
             "properties": {
@@ -951,7 +1217,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "payment_method": {
-                    "$ref": "#/definitions/purchase.PaymentMethod"
+                    "$ref": "#/definitions/paymentmethod.PaymentMethodSummary"
                 },
                 "purchase_date": {
                     "$ref": "#/definitions/purchase.Date"
@@ -992,8 +1258,8 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
-                "payment_method": {
-                    "$ref": "#/definitions/purchase.PaymentMethod"
+                "payment_method_id": {
+                    "type": "integer"
                 },
                 "purchase_date": {
                     "$ref": "#/definitions/purchase.Date"

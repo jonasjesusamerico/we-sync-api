@@ -11,13 +11,17 @@ The purchase entry must contain the following fields:
 | purchase_date | date (`YYYY-MM-DD`) | Yes | Date when the purchase was made. |
 | description | string | Yes | Description of the purchase. |
 | category_id | integer | Yes | ID of a category visible to the user: a global category or one of the user's own personal categories. |
-| payment_method | string | Yes | Payment method used for the purchase. |
+| payment_method_id | integer | Yes | ID of a payment method visible to the user: a global payment method or one of the user's own personal payment methods. |
 | amount | decimal (sent as string) | Yes | Purchase amount. Must be greater than zero. |
 | status | string | Yes | Current status of the purchase. |
 
 > History: the first version of this requirement used a free-text `sector` field.
 > It was replaced by `category_id`, backed by the category management feature
 > (global categories seeded by the system + personal categories per user).
+>
+> The fixed `payment_method` enum was later replaced by `payment_method_id`, backed by the
+> payment methods feature, which follows the same global + personal model
+> (see [`docs/specs/001-payment-methods`](../specs/001-payment-methods/spec.md)).
 
 ## Business Rules
 
@@ -27,14 +31,10 @@ The purchase entry must contain the following fields:
 - PAID
 - CANCELED
 
-### Allowed Payment Methods
+### Payment Method Ownership
 
-- CASH
-- CREDIT_CARD
-- DEBIT_CARD
-- PIX
-- BANK_TRANSFER
-- BOLETO
+- `payment_method_id` must reference an existing payment method that is either global or owned by the authenticated user.
+- A payment method owned by another user is treated as not found, so its existence is never revealed.
 
 ### Category Ownership
 
@@ -48,10 +48,10 @@ The purchase entry must contain the following fields:
 3. `amount` must be greater than `0`.
 4. `purchase_date` must be a valid date in `YYYY-MM-DD` format.
 5. `status` must contain a valid value from the allowed statuses.
-6. `payment_method` must contain a valid value from the allowed payment methods.
+6. `payment_method_id` must reference a payment method accessible to the user; otherwise the API returns `404` with `"payment method not found"`.
 7. `category_id` must reference a category accessible to the user; otherwise the API returns `404` with `"category not found"`.
 8. The purchase entry must be persisted in the database, owned by the authenticated user.
-9. The API must return the created purchase entry, including a summary of its category, after successful creation.
+9. The API must return the created purchase entry, including summaries of its category and payment method, after successful creation.
 
 ## Example Request
 
@@ -62,7 +62,7 @@ The purchase entry must contain the following fields:
   "purchase_date": "2026-06-20",
   "description": "Office supplies",
   "category_id": 3,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount": "150.75",
   "status": "PAID"
 }
@@ -81,7 +81,11 @@ The purchase entry must contain the following fields:
     "name": "Moradia",
     "is_global": true
   },
-  "payment_method": "PIX",
+  "payment_method": {
+    "id": 4,
+    "name": "Pix",
+    "is_global": true
+  },
   "amount": "150.75",
   "status": "PAID",
   "created_at": "2026-06-20T10:00:00Z",
@@ -95,7 +99,7 @@ The purchase entry must contain the following fields:
 |---|---|---|
 | 400 | `BAD_REQUEST` | Malformed JSON or wrong `purchase_date` format |
 | 401 | `UNAUTHORIZED` | Missing or invalid access token |
-| 404 | `NOT_FOUND` | `category_id` does not exist or belongs to another user |
+| 404 | `NOT_FOUND` | `category_id` or `payment_method_id` does not exist or belongs to another user |
 | 422 | `VALIDATION_ERROR` | A business rule above is violated |
 
 The source of truth for the data model is `internal/purchase/model.go`

@@ -13,6 +13,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/middleware"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 	httpSwagger "github.com/swaggo/http-swagger"
 
@@ -24,9 +25,10 @@ const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 // Handlers groups all domain handlers injected into the router.
 type Handlers struct {
-	Auth     *auth.Handler
-	Purchase *purchase.Handler
-	Category *category.Handler
+	Auth          *auth.Handler
+	Purchase      *purchase.Handler
+	Category      *category.Handler
+	PaymentMethod *paymentmethod.Handler
 }
 
 // New builds and returns the root HTTP handler.
@@ -95,6 +97,12 @@ func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
 				r.Post("/", h.Category.Create)
 				r.Put("/{id}", h.Category.Update)
 				r.Delete("/{id}", h.Category.Delete)
+			})
+			r.Route("/payment-methods", func(r chi.Router) {
+				r.Get("/", h.PaymentMethod.List)
+				r.Post("/", h.PaymentMethod.Create)
+				r.Put("/{id}", h.PaymentMethod.Update)
+				r.Delete("/{id}", h.PaymentMethod.Delete)
 			})
 		})
 	})

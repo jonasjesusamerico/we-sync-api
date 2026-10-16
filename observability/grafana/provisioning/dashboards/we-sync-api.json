@@ -70,13 +70,13 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Purchases Created (by Payment Method)",
+      "title": "Purchases Created",
       "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(we_sync_purchase_created_total[5m])) by (payment_method)",
-          "legendFormat": "{{payment_method}}"
+          "expr": "sum(rate(we_sync_purchase_created_total[5m]))",
+          "legendFormat": "created"
         }
       ]
     },

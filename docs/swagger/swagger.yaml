@@ -76,6 +76,40 @@ definitions:
       message:
         type: string
     type: object
+  paymentmethod.CreatePaymentMethodRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  paymentmethod.PaymentMethod:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      is_global:
+        type: boolean
+      name:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: integer
+    type: object
+  paymentmethod.PaymentMethodSummary:
+    properties:
+      id:
+        type: integer
+      is_global:
+        type: boolean
+      name:
+        type: string
+    type: object
+  paymentmethod.UpdatePaymentMethodRequest:
+    properties:
+      name:
+        type: string
+    type: object
   purchase.CreatePurchaseRequest:
     properties:
       amount:
@@ -84,8 +118,8 @@ definitions:
         type: integer
       description:
         type: string
-      payment_method:
-        $ref: '#/definitions/purchase.PaymentMethod'
+      payment_method_id:
+        type: integer
       purchase_date:
         $ref: '#/definitions/purchase.Date'
       status:
@@ -111,22 +145,6 @@ definitions:
       total_pages:
         type: integer
     type: object
-  purchase.PaymentMethod:
-    enum:
-    - CASH
-    - CREDIT_CARD
-    - DEBIT_CARD
-    - PIX
-    - BANK_TRANSFER
-    - BOLETO
-    type: string
-    x-enum-varnames:
-    - PaymentMethodCash
-    - PaymentMethodCreditCard
-    - PaymentMethodDebitCard
-    - PaymentMethodPix
-    - PaymentMethodBankTransfer
-    - PaymentMethodBoleto
   purchase.Purchase:
     properties:
       amount:
@@ -140,7 +158,7 @@ definitions:
       id:
         type: integer
       payment_method:
-        $ref: '#/definitions/purchase.PaymentMethod'
+        $ref: '#/definitions/paymentmethod.PaymentMethodSummary'
       purchase_date:
         $ref: '#/definitions/purchase.Date'
       status:
@@ -168,8 +186,8 @@ definitions:
         type: integer
       description:
         type: string
-      payment_method:
-        $ref: '#/definitions/purchase.PaymentMethod'
+      payment_method_id:
+        type: integer
       purchase_date:
         $ref: '#/definitions/purchase.Date'
       status:
@@ -462,6 +480,166 @@ paths:
       summary: Update a personal category
       tags:
       - categories
+  /payment-methods:
+    get:
+      description: Returns all payment methods visible to the authenticated user (global
+        + personal).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/paymentmethod.PaymentMethod'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: List payment methods
+      tags:
+      - payment-methods
+    post:
+      consumes:
+      - application/json
+      description: Creates a new personal payment method for the authenticated user.
+      parameters:
+      - description: PaymentMethod data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/paymentmethod.CreatePaymentMethodRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/paymentmethod.PaymentMethod'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "409":
+          description: Name already exists
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Create a personal payment method
+      tags:
+      - payment-methods
+  /payment-methods/{id}:
+    delete:
+      description: Removes a personal payment method owned by the authenticated user.
+      parameters:
+      - description: Payment method ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot delete a global payment method
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "409":
+          description: PaymentMethod in use by purchase entries
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Delete a personal payment method
+      tags:
+      - payment-methods
+    put:
+      consumes:
+      - application/json
+      description: Renames a personal payment method owned by the authenticated user.
+      parameters:
+      - description: Payment method ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated payment method data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/paymentmethod.UpdatePaymentMethodRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/paymentmethod.PaymentMethod'
+        "400":
+          description: Invalid request body or ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot modify a global payment method
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "409":
+          description: Name already exists
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Update a personal payment method
+      tags:
+      - payment-methods
   /purchases:
     get:
       description: Returns a paginated and filtered list of purchase entries.
@@ -486,17 +664,10 @@ paths:
         in: query
         name: category_id
         type: integer
-      - description: Payment method
-        enum:
-        - CASH
-        - CREDIT_CARD
-        - DEBIT_CARD
-        - PIX
-        - BANK_TRANSFER
-        - BOLETO
+      - description: Payment method ID (exact match)
         in: query
-        name: payment_method
-        type: string
+        name: payment_method_id
+        type: integer
       - description: Page number (default 1)
         in: query
         name: page
@@ -546,7 +717,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "404":
-          description: Category not found
+          description: Category or payment method not found
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":
@@ -647,7 +818,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "404":
-          description: Purchase or category not found
+          description: Purchase, category or payment method not found
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":

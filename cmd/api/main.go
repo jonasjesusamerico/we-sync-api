@@ -26,6 +26,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/config"
 	"github.com/jonasjesusamerico/we-sync-api/internal/database"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 	"github.com/jonasjesusamerico/we-sync-api/internal/router"
 	"github.com/jonasjesusamerico/we-sync-api/internal/telemetry"
@@ -74,10 +75,13 @@ func main() {
 	// Purchase entries
 	purchaseRepo := purchase.NewRepository(db)
 	categoryRepo := category.NewRepository(db)
-	purchaseSvc := purchase.NewService(purchaseRepo, categoryRepo)
+	paymentMethodRepo := paymentmethod.NewRepository(db)
+	purchaseSvc := purchase.NewService(purchaseRepo, categoryRepo, paymentMethodRepo)
 	purchaseHandler := purchase.NewHandler(purchaseSvc)
 	categorySvc := category.NewService(categoryRepo)
 	categoryHandler := category.NewHandler(categorySvc)
+	paymentMethodSvc := paymentmethod.NewService(paymentMethodRepo)
+	paymentMethodHandler := paymentmethod.NewHandler(paymentMethodSvc)
 	authRepo := auth.NewRepository(db)
 	authSvc := auth.NewService(
 		authRepo,
@@ -89,9 +93,10 @@ func main() {
 
 	// Server setup
 	handlers := router.Handlers{
-		Auth:     authHandler,
-		Purchase: purchaseHandler,
-		Category: categoryHandler,
+		Auth:          authHandler,
+		Purchase:      purchaseHandler,
+		Category:      categoryHandler,
+		PaymentMethod: paymentMethodHandler,
 	}
 
 	server := &http.Server{

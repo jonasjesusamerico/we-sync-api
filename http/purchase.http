@@ -7,7 +7,7 @@
 #   amount         → string decimal        (e.g. "174.65", not a float number)
 #   category_id    → int64                 (ID of a global category or one of the user's)
 #   status         → PENDING | PAID | CANCELED
-#   payment_method → CASH | CREDIT_CARD | DEBIT_CARD | PIX | BANK_TRANSFER | BOLETO
+#   payment_method_id → int64              (ID of a global payment method or one of the user's)
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
@@ -120,8 +120,91 @@ DELETE {{baseUrl}}/categories/1
 Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PAYMENT METHODS  /payment-methods
+# All routes require a Bearer token.
+# Seeded globals: 1 Dinheiro, 2 Cartão de crédito, 3 Cartão de débito, 4 Pix,
+# 5 Transferência bancária, 6 Boleto.
+# ─────────────────────────────────────────────────────────────────────────────
+
+### PAYMENT METHODS — List all (global + personal) → 200
+
+GET {{baseUrl}}/payment-methods
+Authorization: Bearer {{accessToken}}
+
+### PAYMENT METHODS — Create personal payment method → 201
+
+POST {{baseUrl}}/payment-methods
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Nubank"
+}
+
+### PAYMENT METHODS — Create with duplicate name (case-insensitive) → 409
+
+POST {{baseUrl}}/payment-methods
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "nubank"
+}
+
+### PAYMENT METHODS — Create with a global payment method's name → 409
+
+POST {{baseUrl}}/payment-methods
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Pix"
+}
+
+### PAYMENT METHODS — Create with blank name → 422
+
+POST {{baseUrl}}/payment-methods
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "   "
+}
+
+### PAYMENT METHODS — Rename personal payment method → 200
+
+PUT {{baseUrl}}/payment-methods/7
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Nubank Visa"
+}
+
+### PAYMENT METHODS — Try to edit a global payment method → 403
+
+PUT {{baseUrl}}/payment-methods/1
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Cash"
+}
+
+### PAYMENT METHODS — Delete unused personal payment method → 204
+
+DELETE {{baseUrl}}/payment-methods/7
+Authorization: Bearer {{accessToken}}
+
+### PAYMENT METHODS — Try to delete a global payment method → 403
+
+DELETE {{baseUrl}}/payment-methods/1
+Authorization: Bearer {{accessToken}}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CREATE  POST /purchases  → 201
 # category_id: use an ID returned by GET /categories
+# payment_method_id: use an ID returned by GET /payment-methods
 # ─────────────────────────────────────────────────────────────────────────────
 
 ### CREATE — Electricity bill with global category Moradia (id=3)
@@ -134,7 +217,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Electricity bill",
   "category_id":    3,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "174.65",
   "status":         "PENDING"
 }
@@ -149,7 +232,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Internet",
   "category_id":    3,
-  "payment_method": "BOLETO",
+  "payment_method_id": 6,
   "amount":         "99.99",
   "status":         "PAID"
 }
@@ -164,7 +247,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-05",
   "description":    "July rent",
   "category_id":    3,
-  "payment_method": "BANK_TRANSFER",
+  "payment_method_id": 5,
   "amount":         "1500.00",
   "status":         "PENDING"
 }
@@ -179,7 +262,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Invalid test",
   "category_id":    0,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "50.00",
   "status":         "PENDING"
 }
@@ -194,7 +277,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Invalid test",
   "category_id":    999999,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "50.00",
   "status":         "PENDING"
 }
@@ -209,7 +292,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Invalid test",
   "category_id":    1,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "0",
   "status":         "PENDING"
 }
@@ -224,12 +307,12 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Invalid test",
   "category_id":    1,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "50.00",
   "status":         "INVALIDO"
 }
 
-### CREATE — Validation: invalid payment_method → 422
+### CREATE — Validation: unknown payment_method_id → 404
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -239,7 +322,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Invalid test",
   "category_id":    1,
-  "payment_method": "BITCOIN",
+  "payment_method_id": 999999,
   "amount":         "50.00",
   "status":         "PENDING"
 }
@@ -254,7 +337,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01T00:00:00Z",
   "description":    "Wrong date format",
   "category_id":    1,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "50.00",
   "status":         "PENDING"
 }
@@ -303,9 +386,9 @@ Authorization: Bearer {{accessToken}}
 GET {{baseUrl}}/purchases?category_id=3
 Authorization: Bearer {{accessToken}}
 
-### LIST — Filter by payment method
+### LIST — Filter by payment method (exact ID)
 
-GET {{baseUrl}}/purchases?payment_method=PIX
+GET {{baseUrl}}/purchases?payment_method_id=4
 Authorization: Bearer {{accessToken}}
 
 ### LIST — Combined filter: month + year + status + category
@@ -315,7 +398,7 @@ Authorization: Bearer {{accessToken}}
 
 ### LIST — Full filter with pagination
 
-GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&category_id=3&payment_method=PIX&page=1&page_size=10
+GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&category_id=3&payment_method_id=4&page=1&page_size=10
 Authorization: Bearer {{accessToken}}
 
 ### LIST — Page 2 with 5 items per page
@@ -347,7 +430,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Electricity bill — updated",
   "category_id":    3,
-  "payment_method": "CREDIT_CARD",
+  "payment_method_id": 2,
   "amount":         "180.00",
   "status":         "PAID"
 }
@@ -362,7 +445,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Nonexistent",
   "category_id":    1,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "50.00",
   "status":         "PENDING"
 }
@@ -377,7 +460,7 @@ Authorization: Bearer {{accessToken}}
   "purchase_date":  "2024-07-01",
   "description":    "Invalid amount",
   "category_id":    1,
-  "payment_method": "PIX",
+  "payment_method_id": 4,
   "amount":         "-10.00",
   "status":         "PENDING"
 }

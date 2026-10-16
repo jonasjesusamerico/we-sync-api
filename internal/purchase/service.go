@@ -12,6 +12,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 	"github.com/shopspring/decimal"
 )
 
@@ -25,10 +26,17 @@ type categoryLookup interface {
 	GetByID(ctx context.Context, id int64) (*category.Category, error)
 }
 
+// paymentMethodLookup is the only behaviour the purchase service needs from the
+// payment method domain; *paymentmethod.PostgresRepository satisfies it implicitly.
+type paymentMethodLookup interface {
+	GetByID(ctx context.Context, id int64) (*paymentmethod.PaymentMethod, error)
+}
+
 // Service implements the purchase-entry business rules.
 type Service struct {
-	repo       Repository
-	categories categoryLookup
+	repo           Repository
+	categories     categoryLookup
+	paymentMethods paymentMethodLookup
 
 	// Business metrics — recorded after each successful mutation.
 	purchasesCreated metric.Int64Counter
@@ -37,8 +45,9 @@ type Service struct {
 }
 
 // NewService creates a new Service backed by the given repositories.
-// categories is used to validate that a category_id is accessible to the user.
-func NewService(repo Repository, categories categoryLookup) *Service {
+// categories and paymentMethods are used to validate that category_id and
+// payment_method_id are accessible to the user.
+func NewService(repo Repository, categories categoryLookup, paymentMethods paymentMethodLookup) *Service {
 	meter := otel.Meter(meterName)
 
 	purchasesCreated, _ := meter.Int64Counter(
@@ -60,6 +69,7 @@ func NewService(repo Repository, categories categoryLookup) *Service {
 	return &Service{
 		repo:             repo,
 		categories:       categories,
+		paymentMethods:   paymentMethods,
 		purchasesCreated: purchasesCreated,
 		purchasesUpdated: purchasesUpdated,
 		purchasesDeleted: purchasesDeleted,
@@ -86,6 +96,10 @@ func (s *Service) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purc
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
+	if err := s.validatePaymentMethodAccess(ctx, req.PaymentMethodID, userID); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
 
 	p, err := s.repo.Create(ctx, userID, req)
 	if err != nil {
@@ -97,13 +111,12 @@ func (s *Service) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purc
 	span.SetAttributes(
 		attribute.Int64("purchase.id", p.ID),
 		attribute.String("purchase.status", string(p.Status)),
-		attribute.String("purchase.payment_method", string(p.PaymentMethod)),
+		attribute.Int64("purchase.payment_method_id", p.PaymentMethod.ID),
 	)
 
 	s.purchasesCreated.Add(ctx, 1,
 		metric.WithAttributes(
 			attribute.String("status", string(p.Status)),
-			attribute.String("payment_method", string(p.PaymentMethod)),
 		),
 	)
 
@@ -164,7 +177,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (*PaginatedResult
 		attribute.Int("purchase.filter.month", filter.Month),
 		attribute.Int("purchase.filter.year", filter.Year),
 		attribute.String("purchase.filter.status", string(filter.Status)),
-		attribute.String("purchase.filter.payment_method", string(filter.PaymentMethod)),
+		attribute.Int64("purchase.filter.payment_method_id", filter.PaymentMethodID),
 	)
 
 	result, err := s.repo.List(ctx, filter)
@@ -202,6 +215,10 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdatePurchaseReque
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
+	if err := s.validatePaymentMethodAccess(ctx, req.PaymentMethodID, userID); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
 
 	p, err := s.repo.Update(ctx, userID, id, req)
 	if err != nil {
@@ -216,13 +233,12 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdatePurchaseReque
 
 	span.SetAttributes(
 		attribute.String("purchase.status", string(p.Status)),
-		attribute.String("purchase.payment_method", string(p.PaymentMethod)),
+		attribute.Int64("purchase.payment_method_id", p.PaymentMethod.ID),
 	)
 
 	s.purchasesUpdated.Add(ctx, 1,
 		metric.WithAttributes(
 			attribute.String("status", string(p.Status)),
-			attribute.String("payment_method", string(p.PaymentMethod)),
 		),
 	)
 
@@ -268,14 +284,8 @@ func validateRequest(req *PurchaseRequest) error {
 	if req.CategoryID <= 0 {
 		return apperrors.NewValidationError("category_id must be a positive integer")
 	}
-	if req.PaymentMethod == "" {
-		return apperrors.NewValidationError("payment_method is required")
-	}
-	if !req.PaymentMethod.IsValid() {
-		return apperrors.NewValidationError(
-			"payment_method %q is not valid; allowed values: CASH, CREDIT_CARD, DEBIT_CARD, PIX, BANK_TRANSFER, BOLETO",
-			req.PaymentMethod,
-		)
+	if req.PaymentMethodID <= 0 {
+		return apperrors.NewValidationError("payment_method_id must be a positive integer")
 	}
 	if req.Amount.LessThanOrEqual(decimal.Zero) {
 		return apperrors.NewValidationError("amount must be greater than zero")
@@ -302,6 +312,20 @@ func (s *Service) validateCategoryAccess(ctx context.Context, categoryID, userID
 	}
 	if cat == nil || !cat.AccessibleBy(userID) {
 		return category.ErrCategoryNotFound
+	}
+	return nil
+}
+
+// validatePaymentMethodAccess ensures the payment method exists and is accessible by userID.
+// Returns paymentmethod.ErrPaymentMethodNotFound when it does not exist or belongs to
+// another user, so existence of other users' payment methods is never leaked.
+func (s *Service) validatePaymentMethodAccess(ctx context.Context, paymentMethodID, userID int64) error {
+	pm, err := s.paymentMethods.GetByID(ctx, paymentMethodID)
+	if err != nil {
+		return fmt.Errorf("purchaseService.validatePaymentMethodAccess: %w", err)
+	}
+	if pm == nil || !pm.AccessibleBy(userID) {
+		return paymentmethod.ErrPaymentMethodNotFound
 	}
 	return nil
 }

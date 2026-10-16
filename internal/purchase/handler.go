@@ -12,6 +12,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/httputil"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 )
 
 // service is the behaviour of *Service the handler depends on. It is declared
@@ -44,7 +45,7 @@ func NewHandler(svc service) *Handler {
 // @Param       body body     CreatePurchaseRequest true "Purchase entry data"
 // @Success     201  {object} Purchase
 // @Failure     400  {object} httputil.APIError "Invalid request body"
-// @Failure     404  {object} httputil.APIError "Category not found"
+// @Failure     404  {object} httputil.APIError "Category or payment method not found"
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /purchases [post]
@@ -70,23 +71,22 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 // @Description Returns a paginated and filtered list of purchase entries.
 // @Tags        purchases
 // @Produce     json
-// @Param       month          query    int    false "Month (1-12)"
-// @Param       year           query    int    false "Year (e.g. 2024)"
-// @Param       status         query    string false "Status" Enums(PENDING, PAID, CANCELED)
-// @Param       category_id    query    int    false "Category ID (exact match)"
-// @Param       payment_method query    string false "Payment method" Enums(CASH, CREDIT_CARD, DEBIT_CARD, PIX, BANK_TRANSFER, BOLETO)
-// @Param       page           query    int    false "Page number (default 1)"
-// @Param       page_size      query    int    false "Items per page (default 20, max 100)"
-// @Success     200            {object} PaginatedResult
-// @Failure     400            {object} httputil.APIError "Invalid query parameter"
-// @Failure     500            {object} httputil.APIError "Internal server error"
+// @Param       month             query    int    false "Month (1-12)"
+// @Param       year              query    int    false "Year (e.g. 2024)"
+// @Param       status            query    string false "Status" Enums(PENDING, PAID, CANCELED)
+// @Param       category_id       query    int    false "Category ID (exact match)"
+// @Param       payment_method_id query    int    false "Payment method ID (exact match)"
+// @Param       page              query    int    false "Page number (default 1)"
+// @Param       page_size         query    int    false "Items per page (default 20, max 100)"
+// @Success     200               {object} PaginatedResult
+// @Failure     400               {object} httputil.APIError "Invalid query parameter"
+// @Failure     500               {object} httputil.APIError "Internal server error"
 // @Router      /purchases [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	filter := ListFilter{
-		Status:        Status(q.Get("status")),
-		PaymentMethod: PaymentMethod(q.Get("payment_method")),
+		Status: Status(q.Get("status")),
 	}
 
 	if v := q.Get("month"); v != "" {
@@ -114,6 +114,15 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		filter.CategoryID = n
+	}
+
+	if v := q.Get("payment_method_id"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 {
+			httputil.WriteBadRequest(w, "payment_method_id must be a positive integer")
+			return
+		}
+		filter.PaymentMethodID = n
 	}
 
 	if v := q.Get("page"); v != "" {
@@ -181,7 +190,7 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 // @Param       body body     UpdatePurchaseRequest true "Updated purchase data"
 // @Success     200  {object} Purchase
 // @Failure     400  {object} httputil.APIError "Invalid request body or ID"
-// @Failure     404  {object} httputil.APIError "Purchase or category not found"
+// @Failure     404  {object} httputil.APIError "Purchase, category or payment method not found"
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /purchases/{id} [put]
@@ -239,6 +248,8 @@ func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error)
 		httputil.WriteUnauthorized(w, "authentication required")
 	case errors.Is(err, category.ErrCategoryNotFound):
 		httputil.WriteNotFound(w, "category not found")
+	case errors.Is(err, paymentmethod.ErrPaymentMethodNotFound):
+		httputil.WriteNotFound(w, "payment method not found")
 	case errors.Is(err, apperrors.ErrNotFound):
 		httputil.WriteNotFound(w, "purchase not found")
 	case errors.Is(err, apperrors.ErrValidation):

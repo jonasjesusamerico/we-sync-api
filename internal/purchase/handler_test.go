@@ -15,6 +15,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
 	"github.com/jonasjesusamerico/we-sync-api/internal/httputil"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 	"github.com/shopspring/decimal"
 )
 
@@ -68,7 +69,7 @@ func samplePurchase() *Purchase {
 		PurchaseDate:  Date{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)},
 		Description:   "Energy bill",
 		Category:      category.CategorySummary{ID: 1, Name: "Moradia", IsGlobal: true},
-		PaymentMethod: PaymentMethodPix,
+		PaymentMethod: paymentmethod.PaymentMethodSummary{ID: 4, Name: "Pix", IsGlobal: true},
 		Amount:        decimal.NewFromFloat(174.65),
 		Status:        StatusPending,
 		CreatedAt:     time.Now(),
@@ -81,7 +82,7 @@ func validCreateBody() string {
 		"purchase_date":  "2024-07-01",
 		"description":    "Energy bill",
 		"category_id":    1,
-		"payment_method": "PIX",
+		"payment_method_id": 4,
 		"amount":         "174.65",
 		"status":         "PENDING"
 	}`
@@ -129,6 +130,9 @@ func TestHandler_Create_Success(t *testing.T) {
 	}
 	if got.ID != 1 {
 		t.Errorf("expected ID=1, got %d", got.ID)
+	}
+	if want := samplePurchase().PaymentMethod; got.PaymentMethod != want {
+		t.Errorf("expected payment_method %+v, got %+v", want, got.PaymentMethod)
 	}
 }
 
@@ -279,6 +283,21 @@ func TestHandler_List_InvalidMonth(t *testing.T) {
 	}
 }
 
+func TestHandler_List_InvalidPaymentMethodID(t *testing.T) {
+	for _, v := range []string{"0", "-3", "abc"} {
+		h := NewHandler(&mockPurchaseService{})
+
+		req := httptest.NewRequest(http.MethodGet, "/purchases?payment_method_id="+v, nil)
+		rec := httptest.NewRecorder()
+
+		h.List(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("payment_method_id=%s: expected 400, got %d", v, rec.Code)
+		}
+	}
+}
+
 func TestHandler_List_InvalidPageSize(t *testing.T) {
 	h := NewHandler(&mockPurchaseService{
 		ListFn: func(_ context.Context, _ ListFilter) (*PaginatedResult, error) {
@@ -306,7 +325,7 @@ func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/purchases?month=7&year=2024&status=PAID&category_id=3&payment_method=PIX&page=2&page_size=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/purchases?month=7&year=2024&status=PAID&category_id=3&payment_method_id=5&page=2&page_size=10", nil)
 	rec := httptest.NewRecorder()
 
 	h.List(rec, req)
@@ -326,8 +345,8 @@ func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 	if capturedFilter.CategoryID != 3 {
 		t.Errorf("expected CategoryID=3, got %d", capturedFilter.CategoryID)
 	}
-	if capturedFilter.PaymentMethod != PaymentMethodPix {
-		t.Errorf("expected PaymentMethod=PIX, got %q", capturedFilter.PaymentMethod)
+	if capturedFilter.PaymentMethodID != 5 {
+		t.Errorf("expected PaymentMethodID=5, got %d", capturedFilter.PaymentMethodID)
 	}
 	if capturedFilter.Page != 2 {
 		t.Errorf("expected Page=2, got %d", capturedFilter.Page)
@@ -395,6 +414,26 @@ func TestHandler_Create_CategoryNotFound(t *testing.T) {
 	}
 	if apiErr := decodeError(t, rec.Body); apiErr.Message != "category not found" {
 		t.Errorf("expected message %q, got %q", "category not found", apiErr.Message)
+	}
+}
+
+func TestHandler_Create_PaymentMethodNotFound(t *testing.T) {
+	h := NewHandler(&mockPurchaseService{
+		CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
+			return nil, paymentmethod.ErrPaymentMethodNotFound
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/purchases", strings.NewReader(validCreateBody()))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+	if apiErr := decodeError(t, rec.Body); apiErr.Message != "payment method not found" {
+		t.Errorf("expected message %q, got %q", "payment method not found", apiErr.Message)
 	}
 }
 

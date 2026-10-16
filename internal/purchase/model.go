@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/category"
+	"github.com/jonasjesusamerico/we-sync-api/internal/paymentmethod"
 	"github.com/shopspring/decimal"
 )
 
@@ -33,35 +34,6 @@ func (s Status) IsValid() bool {
 
 // IsValidStatus is a convenience wrapper kept for backwards compatibility with tests.
 func IsValidStatus(s string) bool { return Status(s).IsValid() }
-
-// ---------------------------------------------------------------------------
-// PaymentMethod
-// ---------------------------------------------------------------------------
-
-// PaymentMethod represents the accepted payment instruments.
-type PaymentMethod string
-
-const (
-	PaymentMethodCash         PaymentMethod = "CASH"
-	PaymentMethodCreditCard   PaymentMethod = "CREDIT_CARD"
-	PaymentMethodDebitCard    PaymentMethod = "DEBIT_CARD"
-	PaymentMethodPix          PaymentMethod = "PIX"
-	PaymentMethodBankTransfer PaymentMethod = "BANK_TRANSFER"
-	PaymentMethodBoleto       PaymentMethod = "BOLETO"
-)
-
-// IsValid returns true if the payment method is one of the allowed values.
-func (p PaymentMethod) IsValid() bool {
-	switch p {
-	case PaymentMethodCash, PaymentMethodCreditCard, PaymentMethodDebitCard,
-		PaymentMethodPix, PaymentMethodBankTransfer, PaymentMethodBoleto:
-		return true
-	}
-	return false
-}
-
-// IsValidPaymentMethod is a convenience wrapper kept for backwards compatibility.
-func IsValidPaymentMethod(s string) bool { return PaymentMethod(s).IsValid() }
 
 // ---------------------------------------------------------------------------
 // Date — a date-only type that serialises as "YYYY-MM-DD" in JSON.
@@ -97,26 +69,26 @@ func (d *Date) UnmarshalJSON(b []byte) error {
 
 // Purchase represents a purchase entry record.
 type Purchase struct {
-	ID            int64                    `json:"id"`
-	UserID        int64                    `json:"user_id"`
-	PurchaseDate  Date                     `json:"purchase_date"`
-	Description   string                   `json:"description"`
-	Category      category.CategorySummary `json:"category"`
-	PaymentMethod PaymentMethod            `json:"payment_method"`
-	Amount        decimal.Decimal          `json:"amount"`
-	Status        Status                   `json:"status"`
-	CreatedAt     time.Time                `json:"created_at"`
-	UpdatedAt     time.Time                `json:"updated_at"`
+	ID            int64                              `json:"id"`
+	UserID        int64                              `json:"user_id"`
+	PurchaseDate  Date                               `json:"purchase_date"`
+	Description   string                             `json:"description"`
+	Category      category.CategorySummary           `json:"category"`
+	PaymentMethod paymentmethod.PaymentMethodSummary `json:"payment_method"`
+	Amount        decimal.Decimal                    `json:"amount"`
+	Status        Status                             `json:"status"`
+	CreatedAt     time.Time                          `json:"created_at"`
+	UpdatedAt     time.Time                          `json:"updated_at"`
 }
 
 // PurchaseRequest holds the input data for creating or updating a purchase entry.
 type PurchaseRequest struct {
-	PurchaseDate  Date            `json:"purchase_date"`
-	Description   string          `json:"description"`
-	CategoryID    int64           `json:"category_id"`
-	PaymentMethod PaymentMethod   `json:"payment_method"`
-	Amount        decimal.Decimal `json:"amount"`
-	Status        Status          `json:"status"`
+	PurchaseDate    Date            `json:"purchase_date"`
+	Description     string          `json:"description"`
+	CategoryID      int64           `json:"category_id"`
+	PaymentMethodID int64           `json:"payment_method_id"`
+	Amount          decimal.Decimal `json:"amount"`
+	Status          Status          `json:"status"`
 }
 
 // CreatePurchaseRequest is the input type for the Create operation.
@@ -127,14 +99,14 @@ type UpdatePurchaseRequest struct{ PurchaseRequest }
 
 // ListFilter holds the query parameters for filtering and paginating purchase entries.
 type ListFilter struct {
-	UserID        int64
-	Month         int
-	Year          int
-	Status        Status
-	CategoryID    int64
-	PaymentMethod PaymentMethod
-	Page          int
-	PageSize      int
+	UserID          int64
+	Month           int
+	Year            int
+	Status          Status
+	CategoryID      int64
+	PaymentMethodID int64
+	Page            int
+	PageSize        int
 }
 
 // MaxPageSize is the upper bound accepted by the service for PageSize.
