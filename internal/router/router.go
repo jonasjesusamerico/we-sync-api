@@ -20,6 +20,9 @@ import (
 	_ "github.com/jonasjesusamerico/we-sync-api/docs/swagger"
 )
 
+// maxRequestBodyBytes caps every request body; JSON payloads of this API are small.
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
+
 // Handlers groups all domain handlers injected into the router.
 type Handlers struct {
 	Health   *handler.HealthHandler
@@ -50,6 +53,7 @@ func New(
 	r.Use(middleware.Logging(baseLogger))
 	r.Use(middleware.CORS(corsAllowedOrigins))
 	r.Use(chimiddleware.Recoverer)
+	r.Use(middleware.MaxBodySize(maxRequestBodyBytes))
 
 	if enablePprof {
 		registerPprof(r)

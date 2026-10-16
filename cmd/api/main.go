@@ -96,6 +96,12 @@ func main() {
 
 	server := &http.Server{
 		Addr: ":" + properties.Server.Port,
+		// Timeouts protect against slow clients (e.g. slowloris) holding
+		// connections open. WriteTimeout matches nginx proxy_read_timeout.
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 		Handler: router.New(
 			handlers,
 			logger.New(properties.Logger),

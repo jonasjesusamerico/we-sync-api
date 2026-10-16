@@ -157,12 +157,18 @@ func (s *authService) Refresh(ctx context.Context, req *RefreshRequest) (*TokenR
 	}, nil
 }
 
+// Logout revokes the given refresh token. Unknown or already revoked tokens are
+// treated as success so the endpoint does not reveal token state.
 func (s *authService) Logout(ctx context.Context, req *RefreshRequest) error {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Logout")
+	defer span.End()
+	span.SetAttributes(attribute.String("auth.method", "logout"))
+
 	if req == nil || req.RefreshToken == "" {
-		return apperrors.NewValidationError("refresh_token is required")
+		return recordAuthError(span, apperrors.NewValidationError("refresh_token is required"))
 	}
 	if err := s.repo.RevokeRefreshToken(ctx, sha256Hex(req.RefreshToken)); err != nil {
-		return fmt.Errorf("authService.Logout: %w", err)
+		return recordAuthError(span, fmt.Errorf("authService.Logout: %w", err))
 	}
 	return nil
 }

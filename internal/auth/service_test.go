@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,4 +135,180 @@ func TestAuthService_LoginErrorMessageProperty(t *testing.T) {
 			t.Fatalf("error = %v", err)
 		}
 	})
+}
+
+func newTestAuthService(repo AuthRepository) AuthService {
+	return NewAuthService(repo, []byte(testSecret), 15*time.Minute, time.Hour)
+}
+
+func TestAuthService_Register_DuplicateEmail(t *testing.T) {
+	svc := newTestAuthService(&mockAuthRepository{
+		CreateUserFn: func(context.Context, string, string) (*User, error) {
+			return nil, apperrors.ErrConflict
+		},
+	})
+	_, err := svc.Register(context.Background(), &RegisterRequest{Email: "user@example.com", Password: "password123"})
+	if !errors.Is(err, apperrors.ErrConflict) {
+		t.Fatalf("Register() error = %v, want ErrConflict", err)
+	}
+}
+
+func TestAuthService_Register_InvalidInput(t *testing.T) {
+	tests := map[string]RegisterRequest{
+		"invalid email":  {Email: "not-an-email", Password: "password123"},
+		"email too long": {Email: strings.Repeat("a", 250) + "@x.io", Password: "password123"},
+		"short password": {Email: "user@example.com", Password: "short"},
+		"long password":  {Email: "user@example.com", Password: strings.Repeat("a", 73)},
+		"empty fields":   {},
+	}
+	for name, req := range tests {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			svc := newTestAuthService(&mockAuthRepository{
+				CreateUserFn: func(context.Context, string, string) (*User, error) {
+					called = true
+					return &User{ID: 1}, nil
+				},
+			})
+			_, err := svc.Register(context.Background(), &req)
+			if !errors.Is(err, apperrors.ErrValidation) {
+				t.Fatalf("Register() error = %v, want ErrValidation", err)
+			}
+			if called {
+				t.Fatal("repository must not be called for invalid input")
+			}
+		})
+	}
+}
+
+func TestAuthService_Refresh_ValidToken(t *testing.T) {
+	const rawToken = "old-refresh-token"
+	var rotatedOldID, rotatedUserID int64
+	var newHash string
+	var newExpiresAt time.Time
+	svc := newTestAuthService(&mockAuthRepository{
+		GetRefreshTokenFn: func(_ context.Context, tokenHash string) (*RefreshToken, error) {
+			if tokenHash != sha256Hex(rawToken) {
+				t.Fatalf("lookup hash = %q, want SHA-256 of raw token", tokenHash)
+			}
+			return &RefreshToken{ID: 10, UserID: 7, TokenHash: tokenHash, ExpiresAt: time.Now().Add(time.Hour)}, nil
+		},
+		RotateRefreshTokenFn: func(_ context.Context, oldID, userID int64, hash string, expiresAt time.Time) error {
+			rotatedOldID, rotatedUserID, newHash, newExpiresAt = oldID, userID, hash, expiresAt
+			return nil
+		},
+	})
+
+	response, err := svc.Refresh(context.Background(), &RefreshRequest{RefreshToken: rawToken})
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if rotatedOldID != 10 || rotatedUserID != 7 {
+		t.Fatalf("rotated oldID=%d userID=%d, want 10 and 7", rotatedOldID, rotatedUserID)
+	}
+	if response.RefreshToken == rawToken || newHash != sha256Hex(response.RefreshToken) {
+		t.Fatal("new refresh token must differ from the old one and be persisted as its SHA-256 hash")
+	}
+	if time.Until(newExpiresAt) <= 0 || response.TokenType != "Bearer" {
+		t.Fatalf("unexpected expiresAt=%v tokenType=%q", newExpiresAt, response.TokenType)
+	}
+	claims := &Claims{}
+	if _, err := jwt.ParseWithClaims(response.AccessToken, claims, func(*jwt.Token) (any, error) {
+		return []byte(testSecret), nil
+	}); err != nil || claims.Subject != "7" {
+		t.Fatalf("invalid access token: err=%v subject=%q", err, claims.Subject)
+	}
+}
+
+func TestAuthService_Refresh_InvalidToken(t *testing.T) {
+	tests := map[string]*RefreshToken{
+		"not found": nil,
+		"expired":   {ID: 1, UserID: 7, ExpiresAt: time.Now().Add(-time.Second)},
+		"revoked":   {ID: 1, UserID: 7, ExpiresAt: time.Now().Add(time.Hour), Revoked: true},
+	}
+	for name, stored := range tests {
+		t.Run(name, func(t *testing.T) {
+			rotated := false
+			svc := newTestAuthService(&mockAuthRepository{
+				GetRefreshTokenFn: func(context.Context, string) (*RefreshToken, error) { return stored, nil },
+				RotateRefreshTokenFn: func(context.Context, int64, int64, string, time.Time) error {
+					rotated = true
+					return nil
+				},
+			})
+			_, err := svc.Refresh(context.Background(), &RefreshRequest{RefreshToken: "token"})
+			if !errors.Is(err, apperrors.ErrUnauthorized) {
+				t.Fatalf("Refresh() error = %v, want ErrUnauthorized", err)
+			}
+			if rotated {
+				t.Fatal("token must not be rotated")
+			}
+		})
+	}
+}
+
+func TestAuthService_Refresh_ConcurrentReuse(t *testing.T) {
+	// The repository returns ErrUnauthorized when another request already
+	// revoked the token between the lookup and the rotation.
+	svc := newTestAuthService(&mockAuthRepository{
+		GetRefreshTokenFn: func(context.Context, string) (*RefreshToken, error) {
+			return &RefreshToken{ID: 1, UserID: 7, ExpiresAt: time.Now().Add(time.Hour)}, nil
+		},
+		RotateRefreshTokenFn: func(context.Context, int64, int64, string, time.Time) error {
+			return apperrors.ErrUnauthorized
+		},
+	})
+	response, err := svc.Refresh(context.Background(), &RefreshRequest{RefreshToken: "token"})
+	if !errors.Is(err, apperrors.ErrUnauthorized) || response != nil {
+		t.Fatalf("Refresh() = %+v, %v, want nil and ErrUnauthorized", response, err)
+	}
+}
+
+func TestAuthService_Refresh_RepositoryError(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	svc := newTestAuthService(&mockAuthRepository{
+		GetRefreshTokenFn: func(context.Context, string) (*RefreshToken, error) { return nil, dbErr },
+	})
+	_, err := svc.Refresh(context.Background(), &RefreshRequest{RefreshToken: "token"})
+	if !errors.Is(err, dbErr) || errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Fatalf("Refresh() error = %v, want wrapped repository error", err)
+	}
+}
+
+func TestAuthService_Logout_RevokesTokenHash(t *testing.T) {
+	var revokedHash string
+	svc := newTestAuthService(&mockAuthRepository{
+		RevokeRefreshTokenFn: func(_ context.Context, tokenHash string) error {
+			revokedHash = tokenHash
+			return nil
+		},
+	})
+	if err := svc.Logout(context.Background(), &RefreshRequest{RefreshToken: "raw-token"}); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if revokedHash != sha256Hex("raw-token") {
+		t.Fatalf("revoked hash = %q, want SHA-256 of raw token", revokedHash)
+	}
+}
+
+func TestAuthService_Logout_MissingToken(t *testing.T) {
+	svc := newTestAuthService(&mockAuthRepository{
+		RevokeRefreshTokenFn: func(context.Context, string) error {
+			t.Fatal("repository must not be called")
+			return nil
+		},
+	})
+	if err := svc.Logout(context.Background(), &RefreshRequest{}); !errors.Is(err, apperrors.ErrValidation) {
+		t.Fatalf("Logout() error = %v, want ErrValidation", err)
+	}
+}
+
+func TestAuthService_Logout_RepositoryError(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	svc := newTestAuthService(&mockAuthRepository{
+		RevokeRefreshTokenFn: func(context.Context, string) error { return dbErr },
+	})
+	if err := svc.Logout(context.Background(), &RefreshRequest{RefreshToken: "token"}); !errors.Is(err, dbErr) {
+		t.Fatalf("Logout() error = %v, want wrapped repository error", err)
+	}
 }
