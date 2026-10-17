@@ -23,7 +23,7 @@ services:
       retries: 5
       start_period: 10s
     cpus: 0.60
-    mem_limit: 250m
+    mem_limit: 218m  # 32m moved to nginx (peak use under load ~105m)
     mem_reservation: 128m
     command:
       - postgres
@@ -35,9 +35,9 @@ services:
       - maintenance_work_mem=16MB
       - -c
       - effective_cache_size=128MB
-      # 2 apps × (5 write + 5 read) = 20 max connections
+      # 2 apps × (5 write + 5 read) = 20 pool connections + 5 for psql, backups and migrations
       - -c
-      - max_connections=20
+      - max_connections=25
 
   migrate:
     image: migrate/migrate:v4.17.0
@@ -68,7 +68,7 @@ services:
       migrate:
         condition: service_completed_successfully
     cpus: 0.20
-    mem_limit: 32m
+    mem_limit: 64m  # ~4 KiB per open connection (worker_connections 16384 in nginx.conf)
     mem_reservation: 16m
 
   # ---------------------------------------------------------------------------
@@ -92,6 +92,12 @@ services:
       # Trace 10% of requests (metrics stay complete).
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
       OTEL_TRACES_SAMPLER_ARG: "0.1"
+      # Pool sizes are tied to postgres max_connections above. Idle = open, so connections are
+      # reused under load instead of closed and reopened (fork + scram auth on every reopen).
+      DATABASE_WRITE_MAX_OPEN_CONNS: "5"
+      DATABASE_WRITE_MAX_IDLE_CONNS: "5"
+      DATABASE_READ_MAX_OPEN_CONNS: "5"
+      DATABASE_READ_MAX_IDLE_CONNS: "5"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -121,6 +127,12 @@ services:
       # Trace 10% of requests (metrics stay complete).
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
       OTEL_TRACES_SAMPLER_ARG: "0.1"
+      # Pool sizes are tied to postgres max_connections above. Idle = open, so connections are
+      # reused under load instead of closed and reopened (fork + scram auth on every reopen).
+      DATABASE_WRITE_MAX_OPEN_CONNS: "5"
+      DATABASE_WRITE_MAX_IDLE_CONNS: "5"
+      DATABASE_READ_MAX_OPEN_CONNS: "5"
+      DATABASE_READ_MAX_IDLE_CONNS: "5"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -7,6 +7,7 @@ limits from `docker-compose.yml`. They are not part of `go test`.
 |---|---|---|
 | `smoke.js` | Is the stack up, and do the scripts match the API? (every endpoint once) | seconds |
 | `throughput.js` | **How many requests fit in 1 minute?** (N VUs, no think time, JMeter-style) | 1 min + setup |
+| `online.js` | **How many users can be online at once?** (N VUs with think time, each holding a keep-alive connection) | 4 min + setup |
 
 `lib/` holds the HTTP client (`api.js`), the test data setup (`data.js`) and the traffic mix
 (`workload.js`: ~75% reads, 15% creates, 7% updates, 3% deletes).
@@ -27,6 +28,16 @@ $K6 run -e VUS=100 -e DURATION=1m /scripts/throughput.js
 ```
 
 `throughput.js` variables: `VUS` (default 50), `DURATION` (1m), `USERS` (10), `PURCHASES` per user (30).
+
+`online.js` variables: `VUS` (default 300), `RAMP` (1m), `HOLD` (3m), `THINK_MIN`/`THINK_MAX` seconds
+between actions (5/15), `USERS`, `PURCHASES`. Raise `VUS` between runs until the thresholds fail (error
+rate ≥ 1% or CRUD p95 ≥ 500 ms). Unlike `throughput.js`, it holds one open connection per VU, so it also
+hits connection limits (nginx `worker_connections`), not only CPU. One k6 VU uses one connection; a
+browser may open several, so treat the result as an upper bound for browser clients.
+
+```bash
+$K6 run -e VUS=1000 /scripts/online.js
+```
 `BASE_URL` (default `http://localhost:8080`) points both scripts somewhere else.
 
 ### Notes
@@ -56,5 +67,7 @@ $K6 run -e VUS=100 -e DURATION=1m /scripts/throughput.js
 Run `throughput.js` with the same variables on both versions, ideally with a fresh database each time
 (`docker compose down -v && docker compose up --build -d`), and compare the request count, p95 and
 error rate per endpoint (`name` tag) in the end-of-test summary. Repeat each side a few times: a single
-run varies by several percent. `nginx.conf` is a bind mount read at startup, so after changing it run
-`docker exec we-sync-nginx nginx -s reload`.
+run varies by several percent. `nginx.conf` is a single-file bind mount: most editors save by replacing the
+file, which leaves the container on the old copy, so `nginx -s reload` keeps the old config. After changing
+it, recreate the container: `docker compose up -d --no-deps --force-recreate nginx`, then confirm with
+`docker exec we-sync-nginx nginx -T`.
