@@ -38,6 +38,7 @@ internal/identity        userID autenticado no context (WithUserID / UserIDFromC
 internal/logger, telemetry
 ```
 
+Subagente de implementação em `.claude/agents/api-implementer.md`: executa tasks de spec aprovada.
 Regras detalhadas em `.claude/rules/` (carregadas pelos arquivos em uso): `architecture`, `solid-and-code-quality`,
 `api-standards`, `persistence`, `security`, `testing`, `reliability-and-performance`.
 
@@ -72,9 +73,10 @@ Não existe Makefile nem CI — não crie sem pedido.
 Tarefa grande (novo domínio, schema com dados, auth, nova dependência, contrato público): plano curto e
 confirmação antes de implementar. Tarefa pequena: execute direto.
 
-**Spec-Driven Development:** features não triviais seguem `docs/specs/README.md`
-(spec → plan → tasks → implement, templates em `docs/specs/_templates/`). Não avance de fase sem o gate
-da anterior; ao implementar, marque as tasks e mantenha spec e código coerentes.
+**Requisitos e tasks:** features não triviais são especificadas no repositório irmão `../we-sync-requirements`
+(agente `business-analyst`, `docs/requirements/NNN-*/`; tasks em `05-plano-implementacao.md`). Só implemente
+atividades na fase `Aprovado`/`Planejado`; ao implementar, atualize o status das tasks e `evidencias.md` lá.
+As antigas specs locais (`docs/specs/`) estão em `../we-sync-requirements/docs/legacy/we-sync-api/`, somente leitura.
 
 ## Regras inegociáveis
 

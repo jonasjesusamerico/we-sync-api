@@ -21,7 +21,7 @@ The purchase entry must contain the following fields:
 >
 > The fixed `payment_method` enum was later replaced by `payment_method_id`, backed by the
 > payment methods feature, which follows the same global + personal model
-> (see [`docs/specs/001-payment-methods`](../specs/001-payment-methods/spec.md)).
+> (see `../we-sync-requirements/docs/legacy/we-sync-api/001-payment-methods/spec.md`).
 
 ## Business Rules
 

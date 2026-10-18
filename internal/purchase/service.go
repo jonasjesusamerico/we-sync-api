@@ -3,6 +3,8 @@ package purchase
 import (
 	"context"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -274,12 +276,25 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 }
 
 // validateRequest checks all required fields for create and update operations.
+// maxAmount is the largest value the amount column holds (NUMERIC(10, 2), migration 000005). Larger values
+// would fail in PostgreSQL with a numeric overflow (500) instead of a validation error.
+var maxAmount = decimal.RequireFromString("99999999.99")
+
+// maxDescriptionLength is counted in characters (runes), after trimming.
+const maxDescriptionLength = 255
+
+// validateRequest checks the input and normalizes it in place: the description is trimmed, as category and
+// payment method names are.
 func validateRequest(req *PurchaseRequest) error {
 	if req.PurchaseDate.IsZero() {
 		return apperrors.NewValidationError("purchase_date is required")
 	}
+	req.Description = strings.TrimSpace(req.Description)
 	if req.Description == "" {
 		return apperrors.NewValidationError("description is required")
+	}
+	if utf8.RuneCountInString(req.Description) > maxDescriptionLength {
+		return apperrors.NewValidationError("description must be at most %d characters", maxDescriptionLength)
 	}
 	if req.CategoryID <= 0 {
 		return apperrors.NewValidationError("category_id must be a positive integer")
@@ -289,6 +304,13 @@ func validateRequest(req *PurchaseRequest) error {
 	}
 	if req.Amount.LessThanOrEqual(decimal.Zero) {
 		return apperrors.NewValidationError("amount must be greater than zero")
+	}
+	// The column would round extra decimals silently.
+	if !req.Amount.Equal(req.Amount.Round(2)) {
+		return apperrors.NewValidationError("amount must have at most 2 decimal places")
+	}
+	if req.Amount.GreaterThan(maxAmount) {
+		return apperrors.NewValidationError("amount must be at most %s", maxAmount.StringFixed(2))
 	}
 	if req.Status == "" {
 		return apperrors.NewValidationError("status is required")

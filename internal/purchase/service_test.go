@@ -3,6 +3,7 @@ package purchase
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -541,5 +542,94 @@ func TestIsValidStatus(t *testing.T) {
 		if s.IsValid() {
 			t.Errorf("expected %q to be invalid", s)
 		}
+	}
+}
+
+func TestService_Create_AmountLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		amount  string
+		wantErr bool
+	}{
+		{name: "smallest", amount: "0.01"},
+		{name: "column maximum", amount: "99999999.99"},
+		{name: "trailing zero beyond two decimals", amount: "12.340"},
+		{name: "above column maximum", amount: "100000000.00", wantErr: true},
+		{name: "three decimal places", amount: "1.234", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := validCreateRequest()
+			req.Amount = decimal.RequireFromString(tt.amount)
+			svc := newSvc(&mockPurchaseRepository{
+				CreateFn: func(_ context.Context, _ int64, r *CreatePurchaseRequest) (*Purchase, error) {
+					return purchaseFromCreate(r), nil
+				},
+			}, globalCatRepo())
+
+			_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
+
+			if tt.wantErr != errors.Is(err, apperrors.ErrValidation) {
+				t.Fatalf("amount %s: wantErr=%v, got %v", tt.amount, tt.wantErr, err)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestService_Create_DescriptionRules(t *testing.T) {
+	tests := []struct {
+		name        string
+		description string
+		wantErr     bool
+		wantStored  string
+	}{
+		{name: "trimmed", description: "  Mercado \t", wantStored: "Mercado"},
+		{name: "blank", description: "   ", wantErr: true},
+		{name: "255 multibyte characters", description: strings.Repeat("é", 255), wantStored: strings.Repeat("é", 255)},
+		{name: "256 characters", description: strings.Repeat("a", 256), wantErr: true},
+		{name: "limit counted after trimming", description: " " + strings.Repeat("a", 255) + " ", wantStored: strings.Repeat("a", 255)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := validCreateRequest()
+			req.Description = tt.description
+			var stored string
+			svc := newSvc(&mockPurchaseRepository{
+				CreateFn: func(_ context.Context, _ int64, r *CreatePurchaseRequest) (*Purchase, error) {
+					stored = r.Description
+					return purchaseFromCreate(r), nil
+				},
+			}, globalCatRepo())
+
+			_, err := svc.Create(identity.WithUserID(context.Background(), 1), req)
+
+			if tt.wantErr {
+				if !errors.Is(err, apperrors.ErrValidation) {
+					t.Fatalf("expected ErrValidation, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if stored != tt.wantStored {
+				t.Errorf("stored description = %q, want %q", stored, tt.wantStored)
+			}
+		})
+	}
+}
+
+func TestService_Update_AppliesTheSameRules(t *testing.T) {
+	req := validUpdateRequest()
+	req.Amount = decimal.RequireFromString("100000000.00")
+	svc := newSvc(&mockPurchaseRepository{}, globalCatRepo())
+
+	_, err := svc.Update(identity.WithUserID(context.Background(), 1), 1, req)
+
+	if !errors.Is(err, apperrors.ErrValidation) {
+		t.Errorf("expected ErrValidation, got %v", err)
 	}
 }
