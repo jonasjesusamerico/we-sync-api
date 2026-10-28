@@ -51,7 +51,7 @@ go build ./...
 go test ./...                  # unitários, não exigem banco
 go test -race ./internal/...   # ao mexer em concorrência/middlewares
 go test ./internal/purchase -run TestService_Create -v
-docker compose up --build      # postgres, migrate, nginx (:8080), 2 apps, observabilidade
+docker compose up --build      # postgres, migrate, nginx (:8080), 2 apps, front (:3000, exige ../we-sync-front clonado ao lado), observabilidade
 docker run --rm -i --network host -v $PWD/perf/k6:/scripts:ro grafana/k6:1.0.0 run /scripts/smoke.js   # carga: ver perf/k6/README.md
 go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/api/main.go -o docs/swagger   # após mudar anotações
 ```

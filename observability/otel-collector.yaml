@@ -25,8 +25,9 @@ processors:
   # Memory limiter prevents OOM by dropping data when memory pressure is high.
   memory_limiter:
     check_interval: 1s
-    limit_mib: 200
-    spike_limit_mib: 50
+    # ~78% of mem_limit in docker-compose.yml (253m): keep them in step.
+    limit_mib: 197
+    spike_limit_mib: 49
 
 exporters:
   # Forward traces to Jaeger via OTLP gRPC.

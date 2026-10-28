@@ -38,7 +38,7 @@ execute them.
 ## Performance and concurrency (always on)
 
 The API runs on a tight budget — `docker-compose.yml` is the source of truth; today, per app instance:
-~0.35 CPU, 100 MB RAM, `GOMAXPROCS=1`, `GOMEMLIMIT=80MiB`, 5 write + 5 read DB connections, PostgreSQL with
+~0.342 CPU, 98 MB RAM, `GOMAXPROCS=1`, `GOMEMLIMIT=78MiB`, 5 write + 5 read DB connections, PostgreSQL with
 `max_connections=25` shared by 2 instances. Every request competes for these. Treat performance as a
 requirement of every task, following `reliability-and-performance.md` and `persistence.md`:
 

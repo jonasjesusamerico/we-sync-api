@@ -49,6 +49,34 @@ $K6 run -e VUS=1000 /scripts/online.js
 - **Data accumulates** (users and purchases from every run). `docker compose down -v` resets the
   database.
 
+## Minimum capacity (100 online users)
+
+With the limits in `docker-compose.yml` (frontend included), the stack must hold 100 online users. Run it
+on a fresh database:
+
+```bash
+docker compose down -v && docker compose up --build -d
+$K6 run -e VUS=100 /scripts/online.js
+```
+
+It passes when:
+
+- the k6 thresholds are green (CRUD error rate < 1%, CRUD p95 < 500 ms);
+- no container was OOM-killed or restarted during the run:
+
+  ```bash
+  for c in $(docker compose ps -aq); do
+    docker inspect -f '{{.Name}} oom={{.State.OOMKilled}} restarts={{.RestartCount}}' "$c"
+  done
+  ```
+
+  Every line must show `oom=false restarts=0`;
+- the run shows up in Grafana (`we-sync-api — Overview` dashboard, http://localhost:3001) and its traces in
+  Jaeger (service `we-sync-api`, http://localhost:16686).
+
+If it fails, do not tune the limits by hand: the budget (1506m / 2.40 CPU) and any redistribution are
+decided in the feature's ADR.
+
 ## Reading the results
 
 - `http_reqs{kind:crud}` is the **total number of requests served in the window**. The `/s` rate k6

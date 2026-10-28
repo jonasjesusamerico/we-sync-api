@@ -1,5 +1,9 @@
 services:
 
+  # Resource budget: the sum of mem_limit and cpus of all long-running services
+  # (migrate excluded, it exits before the apps start) must stay <= 1506m and 2.40 CPU.
+  # Any new service takes its share from the others (equal cut, see ADR-07 of feature 001).
+
   # ---------------------------------------------------------------------------
   # Infrastructure
   # ---------------------------------------------------------------------------
@@ -22,19 +26,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    cpus: 0.60
-    mem_limit: 218m  # 32m moved to nginx (peak use under load ~105m)
+    cpus: 0.587
+    mem_limit: 215m  # peak use under load ~105m
     mem_reservation: 128m
     command:
       - postgres
       - -c
-      - shared_buffers=64MB
+      - shared_buffers=63MB
       - -c
       - work_mem=2MB
       - -c
       - maintenance_work_mem=16MB
       - -c
-      - effective_cache_size=128MB
+      - effective_cache_size=126MB
       # 2 apps × (5 write + 5 read) = 20 pool connections + 5 for psql, backups and migrations
       - -c
       - max_connections=25
@@ -67,8 +71,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    cpus: 0.20
-    mem_limit: 64m  # ~4 KiB per open connection (worker_connections 16384 in nginx.conf)
+    cpus: 0.195
+    mem_limit: 63m  # ~4 KiB per open connection (worker_connections 16128 in nginx.conf)
     mem_reservation: 16m
 
   # ---------------------------------------------------------------------------
@@ -84,10 +88,10 @@ services:
     env_file:
       - .env
     environment:
-      # Limits below (cpus/mem_limit) are unchanged; these only tune the runtime to them.
+      # These only tune the Go runtime to the cpus/mem_limit below: change them together.
       # Soft heap target under mem_limit, so the GC works harder before the kernel OOM-kills.
-      GOMEMLIMIT: 80MiB
-      # One P for a 0.35 CPU quota: fewer bursts that exhaust the CFS quota and stall p99.
+      GOMEMLIMIT: 78MiB
+      # One P for a 0.342 CPU quota: fewer bursts that exhaust the CFS quota and stall p99.
       GOMAXPROCS: "1"
       # Trace 10% of requests (metrics stay complete).
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
@@ -106,8 +110,8 @@ services:
     # Port 9090 is the Prometheus /metrics scrape endpoint exposed by the app.
     expose:
       - "9090"
-    cpus: 0.35
-    mem_limit: 100m
+    cpus: 0.342
+    mem_limit: 98m
     mem_reservation: 64m
 
   app2:
@@ -119,10 +123,10 @@ services:
     env_file:
       - .env
     environment:
-      # Limits below (cpus/mem_limit) are unchanged; these only tune the runtime to them.
+      # These only tune the Go runtime to the cpus/mem_limit below: change them together.
       # Soft heap target under mem_limit, so the GC works harder before the kernel OOM-kills.
-      GOMEMLIMIT: 80MiB
-      # One P for a 0.35 CPU quota: fewer bursts that exhaust the CFS quota and stall p99.
+      GOMEMLIMIT: 78MiB
+      # One P for a 0.342 CPU quota: fewer bursts that exhaust the CFS quota and stall p99.
       GOMAXPROCS: "1"
       # Trace 10% of requests (metrics stay complete).
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
@@ -140,9 +144,35 @@ services:
         condition: service_started
     expose:
       - "9090"
-    cpus: 0.35
-    mem_limit: 100m
+    cpus: 0.342
+    mem_limit: 98m
     mem_reservation: 64m
+
+  # ---------------------------------------------------------------------------
+  # Frontend
+  # ---------------------------------------------------------------------------
+
+  # Angular SPA served as static files by its own nginx (port 3000). Built from the
+  # sibling repository: clone we-sync-front next to this one (../we-sync-front).
+  # The browser calls the API on http://localhost:8080; :3000 is in CORS_ALLOWED_ORIGINS.
+  front:
+    build:
+      context: ../we-sync-front
+      dockerfile: Dockerfile
+    container_name: we-sync-front
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    healthcheck:
+      # 127.0.0.1, not localhost: in alpine, localhost may resolve to ::1.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    cpus: 0.05
+    mem_limit: 16m
+    mem_reservation: 8m
 
   # ---------------------------------------------------------------------------
   # Observability stack
@@ -176,8 +206,8 @@ services:
       - "13133:13133" # Health check extension endpoint
     depends_on:
       - jaeger
-    cpus: 0.20
-    mem_limit: 256m
+    cpus: 0.195
+    mem_limit: 253m
     mem_reservation: 64m
 
   # Jaeger — distributed tracing backend + UI.
@@ -197,8 +227,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
-    cpus: 0.30
-    mem_limit: 256m
+    cpus: 0.293
+    mem_limit: 253m
     mem_reservation: 128m
 
   # Prometheus — metrics collection and storage.
@@ -219,8 +249,8 @@ services:
       - "9091:9090"   # Prometheus UI (9091 on host to avoid conflict with app /metrics)
     depends_on:
       - otel-collector
-    cpus: 0.20
-    mem_limit: 256m
+    cpus: 0.195
+    mem_limit: 253m
     mem_reservation: 64m
 
   # Grafana — dashboards for metrics and trace correlation.
@@ -242,8 +272,8 @@ services:
     depends_on:
       - prometheus
       - jaeger
-    cpus: 0.20
-    mem_limit: 256m
+    cpus: 0.195
+    mem_limit: 253m
     mem_reservation: 64m
 
 volumes:
