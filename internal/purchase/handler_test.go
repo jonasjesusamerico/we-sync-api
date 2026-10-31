@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -379,22 +380,63 @@ func TestHandler_Update_Success(t *testing.T) {
 	}
 }
 
+// assertNotFoundCode checks a 404 response with the exact error code and message of the contract.
+func assertNotFoundCode(t *testing.T, rec *httptest.ResponseRecorder, wantCode, wantMessage string) {
+	t.Helper()
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+	apiErr := decodeError(t, rec.Body)
+	if apiErr.Code != wantCode {
+		t.Errorf("expected code %q, got %q", wantCode, apiErr.Code)
+	}
+	if apiErr.Message != wantMessage {
+		t.Errorf("expected message %q, got %q", wantMessage, apiErr.Message)
+	}
+}
+
+func newUpdateRequest(id string) *http.Request {
+	req := httptest.NewRequest(http.MethodPut, "/purchases/"+id, strings.NewReader(validCreateBody()))
+	return withChiID(req, id)
+}
+
 func TestHandler_Update_NotFound(t *testing.T) {
 	h := NewHandler(&mockPurchaseService{
 		UpdateFn: func(_ context.Context, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
 			return nil, apperrors.ErrNotFound
 		},
 	})
-
-	req := httptest.NewRequest(http.MethodPut, "/purchases/99", strings.NewReader(validCreateBody()))
-	req = withChiID(req, "99")
 	rec := httptest.NewRecorder()
 
-	h.Update(rec, req)
+	h.Update(rec, newUpdateRequest("99"))
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
+	assertNotFoundCode(t, rec, httputil.ErrCodeNotFound, "purchase not found")
+}
+
+func TestHandler_Update_CategoryNotFound(t *testing.T) {
+	h := NewHandler(&mockPurchaseService{
+		UpdateFn: func(_ context.Context, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
+			return nil, category.ErrCategoryNotFound
+		},
+	})
+	rec := httptest.NewRecorder()
+
+	h.Update(rec, newUpdateRequest("1"))
+
+	assertNotFoundCode(t, rec, httputil.ErrCodeCategoryNotFound, "category not found")
+}
+
+func TestHandler_Update_PaymentMethodNotFound(t *testing.T) {
+	h := NewHandler(&mockPurchaseService{
+		UpdateFn: func(_ context.Context, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
+			return nil, paymentmethod.ErrPaymentMethodNotFound
+		},
+	})
+	rec := httptest.NewRecorder()
+
+	h.Update(rec, newUpdateRequest("1"))
+
+	assertNotFoundCode(t, rec, httputil.ErrCodePaymentMethodNotFound, "payment method not found")
 }
 
 func TestHandler_Create_CategoryNotFound(t *testing.T) {
@@ -409,12 +451,7 @@ func TestHandler_Create_CategoryNotFound(t *testing.T) {
 
 	h.Create(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rec.Code)
-	}
-	if apiErr := decodeError(t, rec.Body); apiErr.Message != "category not found" {
-		t.Errorf("expected message %q, got %q", "category not found", apiErr.Message)
-	}
+	assertNotFoundCode(t, rec, httputil.ErrCodeCategoryNotFound, "category not found")
 }
 
 func TestHandler_Create_PaymentMethodNotFound(t *testing.T) {
@@ -429,11 +466,46 @@ func TestHandler_Create_PaymentMethodNotFound(t *testing.T) {
 
 	h.Create(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rec.Code)
+	assertNotFoundCode(t, rec, httputil.ErrCodePaymentMethodNotFound, "payment method not found")
+}
+
+// TestHandler_ReferenceNotFound_Wrapped covers the race path: the reference is deleted between the
+// service check and the INSERT/UPDATE, the repository maps the FK violation to the same sentinel and
+// the service returns it wrapped. The client must still get the specific code.
+func TestHandler_ReferenceNotFound_Wrapped(t *testing.T) {
+	tests := []struct {
+		name        string
+		op          string
+		err         error
+		wantCode    string
+		wantMessage string
+	}{
+		{"create_category", "Create", fmt.Errorf("purchaseService.Create: %w", category.ErrCategoryNotFound), httputil.ErrCodeCategoryNotFound, "category not found"},
+		{"create_payment_method", "Create", fmt.Errorf("purchaseService.Create: %w", paymentmethod.ErrPaymentMethodNotFound), httputil.ErrCodePaymentMethodNotFound, "payment method not found"},
+		{"update_category", "Update", fmt.Errorf("purchaseService.Update: %w", category.ErrCategoryNotFound), httputil.ErrCodeCategoryNotFound, "category not found"},
+		{"update_payment_method", "Update", fmt.Errorf("purchaseService.Update: %w", paymentmethod.ErrPaymentMethodNotFound), httputil.ErrCodePaymentMethodNotFound, "payment method not found"},
 	}
-	if apiErr := decodeError(t, rec.Body); apiErr.Message != "payment method not found" {
-		t.Errorf("expected message %q, got %q", "payment method not found", apiErr.Message)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(&mockPurchaseService{
+				CreateFn: func(_ context.Context, _ *CreatePurchaseRequest) (*Purchase, error) {
+					return nil, tt.err
+				},
+				UpdateFn: func(_ context.Context, _ int64, _ *UpdatePurchaseRequest) (*Purchase, error) {
+					return nil, tt.err
+				},
+			})
+			rec := httptest.NewRecorder()
+
+			if tt.op == "Create" {
+				h.Create(rec, httptest.NewRequest(http.MethodPost, "/purchases", strings.NewReader(validCreateBody())))
+			} else {
+				h.Update(rec, newUpdateRequest("1"))
+			}
+
+			assertNotFoundCode(t, rec, tt.wantCode, tt.wantMessage)
+		})
 	}
 }
 
@@ -482,9 +554,7 @@ func TestHandler_Delete_NotFound(t *testing.T) {
 
 	h.Delete(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
+	assertNotFoundCode(t, rec, httputil.ErrCodeNotFound, "purchase not found")
 }
 
 func TestHandler_Delete_InvalidID(t *testing.T) {

@@ -99,7 +99,8 @@ The purchase entry must contain the following fields:
 |---|---|---|
 | 400 | `BAD_REQUEST` | Malformed JSON or wrong `purchase_date` format |
 | 401 | `UNAUTHORIZED` | Missing or invalid access token |
-| 404 | `NOT_FOUND` | `category_id` or `payment_method_id` does not exist or belongs to another user |
+| 404 | `CATEGORY_NOT_FOUND` | `category_id` does not exist or belongs to another user |
+| 404 | `PAYMENT_METHOD_NOT_FOUND` | `payment_method_id` does not exist or belongs to another user |
 | 422 | `VALIDATION_ERROR` | A business rule above is violated |
 
 The source of truth for the data model is `internal/purchase/model.go`

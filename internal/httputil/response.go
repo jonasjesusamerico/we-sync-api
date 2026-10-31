@@ -18,13 +18,18 @@ type APIError struct {
 
 // Common error codes used across the API.
 const (
-	ErrCodeBadRequest          = "BAD_REQUEST"
-	ErrCodeValidation          = "VALIDATION_ERROR"
-	ErrCodeNotFound            = "NOT_FOUND"
-	ErrCodeUnauthorized        = "UNAUTHORIZED"
-	ErrCodeForbidden           = "FORBIDDEN"
-	ErrCodeConflict            = "CONFLICT"
-	ErrCodeInternalServerError = "INTERNAL_SERVER_ERROR"
+	ErrCodeBadRequest = "BAD_REQUEST"
+	ErrCodeValidation = "VALIDATION_ERROR"
+	ErrCodeNotFound   = "NOT_FOUND"
+	// Not-found codes for references in a request body (purchase create/update): they tell the client which
+	// referenced resource is missing. The HTTP status is still 404, and "belongs to another user" answers the
+	// same as "does not exist".
+	ErrCodeCategoryNotFound      = "CATEGORY_NOT_FOUND"
+	ErrCodePaymentMethodNotFound = "PAYMENT_METHOD_NOT_FOUND"
+	ErrCodeUnauthorized          = "UNAUTHORIZED"
+	ErrCodeForbidden             = "FORBIDDEN"
+	ErrCodeConflict              = "CONFLICT"
+	ErrCodeInternalServerError   = "INTERNAL_SERVER_ERROR"
 )
 
 // WriteJSON encodes v as JSON and writes it to w with the given HTTP status code.

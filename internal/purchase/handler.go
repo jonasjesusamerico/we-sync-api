@@ -45,7 +45,7 @@ func NewHandler(svc service) *Handler {
 // @Param       body body     CreatePurchaseRequest true "Purchase entry data"
 // @Success     201  {object} Purchase
 // @Failure     400  {object} httputil.APIError "Invalid request body"
-// @Failure     404  {object} httputil.APIError "Category or payment method not found"
+// @Failure     404  {object} httputil.APIError "CATEGORY_NOT_FOUND or PAYMENT_METHOD_NOT_FOUND: category or payment method not found or not accessible"
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /purchases [post]
@@ -190,7 +190,7 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 // @Param       body body     UpdatePurchaseRequest true "Updated purchase data"
 // @Success     200  {object} Purchase
 // @Failure     400  {object} httputil.APIError "Invalid request body or ID"
-// @Failure     404  {object} httputil.APIError "Purchase, category or payment method not found"
+// @Failure     404  {object} httputil.APIError "NOT_FOUND: purchase not found; CATEGORY_NOT_FOUND or PAYMENT_METHOD_NOT_FOUND: category or payment method not found or not accessible"
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /purchases/{id} [put]
@@ -247,9 +247,9 @@ func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error)
 	case errors.Is(err, apperrors.ErrUnauthorized):
 		httputil.WriteUnauthorized(w, "authentication required")
 	case errors.Is(err, category.ErrCategoryNotFound):
-		httputil.WriteNotFound(w, "category not found")
+		httputil.WriteError(w, http.StatusNotFound, httputil.ErrCodeCategoryNotFound, "category not found")
 	case errors.Is(err, paymentmethod.ErrPaymentMethodNotFound):
-		httputil.WriteNotFound(w, "payment method not found")
+		httputil.WriteError(w, http.StatusNotFound, httputil.ErrCodePaymentMethodNotFound, "payment method not found")
 	case errors.Is(err, apperrors.ErrNotFound):
 		httputil.WriteNotFound(w, "purchase not found")
 	case errors.Is(err, apperrors.ErrValidation):

@@ -798,7 +798,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Category or payment method not found",
+                        "description": "CATEGORY_NOT_FOUND or PAYMENT_METHOD_NOT_FOUND: category or payment method not found or not accessible",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -908,7 +908,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Purchase, category or payment method not found",
+                        "description": "NOT_FOUND: purchase not found; CATEGORY_NOT_FOUND or PAYMENT_METHOD_NOT_FOUND: category or payment method not found or not accessible",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }

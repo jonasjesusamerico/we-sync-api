@@ -267,7 +267,7 @@ Authorization: Bearer {{accessToken}}
   "status":         "PENDING"
 }
 
-### CREATE — Validation: unknown category_id → 404
+### CREATE — Validation: unknown category_id → 404 CATEGORY_NOT_FOUND
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -312,7 +312,7 @@ Authorization: Bearer {{accessToken}}
   "status":         "INVALIDO"
 }
 
-### CREATE — Validation: unknown payment_method_id → 404
+### CREATE — Validation: unknown payment_method_id → 404 PAYMENT_METHOD_NOT_FOUND
 
 POST {{baseUrl}}/purchases
 Content-Type: {{contentType}}
@@ -435,7 +435,7 @@ Authorization: Bearer {{accessToken}}
   "status":         "PAID"
 }
 
-### UPDATE — Unknown ID → 404
+### UPDATE — Unknown ID → 404 NOT_FOUND
 
 PUT {{baseUrl}}/purchases/999999
 Content-Type: {{contentType}}
@@ -446,6 +446,36 @@ Authorization: Bearer {{accessToken}}
   "description":    "Nonexistent",
   "category_id":    1,
   "payment_method_id": 4,
+  "amount":         "50.00",
+  "status":         "PENDING"
+}
+
+### UPDATE — Unknown category_id → 404 CATEGORY_NOT_FOUND
+
+PUT {{baseUrl}}/purchases/1
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Unknown category",
+  "category_id":    999999,
+  "payment_method_id": 4,
+  "amount":         "50.00",
+  "status":         "PENDING"
+}
+
+### UPDATE — Unknown payment_method_id → 404 PAYMENT_METHOD_NOT_FOUND
+
+PUT {{baseUrl}}/purchases/1
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Unknown payment method",
+  "category_id":    1,
+  "payment_method_id": 999999,
   "amount":         "50.00",
   "status":         "PENDING"
 }
