@@ -12,7 +12,7 @@
 // More VUs than the API can serve does not raise the total, only latency:
 // try a few values (e.g. 10, 50, 100) and keep the one with the most requests.
 import { prepareUsers } from './lib/data.js';
-import { crudAction } from './lib/workload.js';
+import { crudAction, userForVU } from './lib/workload.js';
 
 export const options = {
   setupTimeout: '5m',
@@ -36,5 +36,5 @@ export function setup() {
 }
 
 export default function (data) {
-  crudAction(data);
+  crudAction(userForVU(data), data.refs);
 }

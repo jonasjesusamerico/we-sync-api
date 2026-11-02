@@ -15,7 +15,7 @@
 // Expected load ≈ VUS / average think time requests per second.
 import { sleep } from 'k6';
 import { prepareUsers } from './lib/data.js';
-import { crudAction } from './lib/workload.js';
+import { crudAction, userForVU } from './lib/workload.js';
 
 const THINK_MIN = Number(__ENV.THINK_MIN || 5);
 const THINK_MAX = Number(__ENV.THINK_MAX || 15);
@@ -46,6 +46,6 @@ export function setup() {
 }
 
 export default function (data) {
-  crudAction(data);
+  crudAction(userForVU(data), data.refs);
   sleep(THINK_MIN + Math.random() * (THINK_MAX - THINK_MIN));
 }

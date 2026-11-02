@@ -38,8 +38,8 @@ export function userForVU(data) {
   return data.users[(exec.vu.idInTest - 1) % data.users.length];
 }
 
-export function crudAction(data) {
-  const user = userForVU(data);
+// user: { accessToken, purchaseIds }; refs: { categoryIds, paymentMethodIds }.
+export function crudAction(user, refs) {
   const token = user.accessToken;
 
   switch (chooseAction()) {
@@ -61,14 +61,14 @@ export function crudAction(data) {
       api.listOwned(token, 'payment-methods');
       break;
     case 'create': {
-      const purchase = api.createPurchase(token, randomPurchase(data.refs));
+      const purchase = api.createPurchase(token, randomPurchase(refs));
       if (purchase) {
         created.push(purchase.id);
       }
       break;
     }
     case 'update':
-      api.updatePurchase(token, pick(user.purchaseIds), randomPurchase(data.refs));
+      api.updatePurchase(token, pick(user.purchaseIds), randomPurchase(refs));
       break;
     case 'delete':
       if (created.length > 0) {

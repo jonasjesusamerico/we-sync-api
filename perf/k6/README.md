@@ -8,6 +8,7 @@ limits from `docker-compose.yml`. They are not part of `go test`.
 | `smoke.js` | Is the stack up, and do the scripts match the API? (every endpoint once) | seconds |
 | `throughput.js` | **How many requests fit in 1 minute?** (N VUs, no think time, JMeter-style) | 1 min + setup |
 | `online.js` | **How many users can be online at once?** (N VUs with think time, each holding a keep-alive connection) | 4 min + setup |
+| `stress.js` | **Does it hold N users online at once, each with their own account?** (needs `seed.sql`) | 7 min |
 
 `lib/` holds the HTTP client (`api.js`), the test data setup (`data.js`) and the traffic mix
 (`workload.js`: ~75% reads, 15% creates, 7% updates, 3% deletes).
@@ -48,6 +49,32 @@ $K6 run -e VUS=1000 /scripts/online.js
   hashing instead of the API.
 - **Data accumulates** (users and purchases from every run). `docker compose down -v` resets the
   database.
+
+## Stress test with one account per user (`stress.js`)
+
+`online.js` shares a few accounts between all VUs, because its setup creates them through the API (two
+bcrypt hashes per account). `stress.js` gives every VU its own account: VU *i* is `k6-load-i@example.com`.
+The accounts are created by `seed.sql` directly in the database, in seconds, with 30 purchases each and one
+single-use refresh token per account. They cannot log in with a password, and the VUs never call login.
+
+**Local test databases only:** the refresh tokens are derived from the key you pass.
+
+Re-run the seed with a new key before **every** run: the API rotates refresh tokens on use, so a key works
+once. Users and purchases are kept between runs; only the refresh tokens are replaced.
+
+```bash
+KEY=$(openssl rand -hex 16)
+docker exec -i we-sync-postgres psql -U postgres -d finance -v n=4500 -v key=$KEY < perf/k6/seed.sql
+$K6 run -e KEY=$KEY -e VUS=4500 /scripts/stress.js
+```
+
+`seed.sql` variables: `n` (accounts, required), `key` (required), `purchases` per account (default 30).
+`stress.js` variables: `KEY` (required), `VUS` (default 4500, at most the seeded `n`), `RAMP` (2m),
+`HOLD` (5m), `THINK_MIN`/`THINK_MAX` (5/15). Each VU first "opens the app" (refresh, global categories and
+payment methods, first page of purchases), then runs the CRUD mix of `online.js` and refreshes its access
+token every 10 minutes, so `HOLD` may exceed the 15-minute token lifetime. The thresholds and the OOM check
+are the same as in the next section. The ramp opens `VUS` new sessions in `RAMP` (4500 in 2m is ~38
+refreshes/s on top of the CRUD load): lengthen `RAMP` to separate the two.
 
 ## Minimum capacity (100 online users)
 
