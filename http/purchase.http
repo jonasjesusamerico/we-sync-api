@@ -11,6 +11,7 @@
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
+@name = Test User
 @email = user@example.com
 @password = password123
 @accessToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ3ZS1zeW5jLWFwaSIsInN1YiI6IjIiLCJhdWQiOlsid2Utc3luYy1hcGkiXSwiZXhwIjoxNzkxNzY0NzQwLCJpYXQiOjE3OTE3NjM4NDB9.kcfmbmZrBh9EvxKqnG0em9nA6LJEqXh4HegVlzkGQvY
@@ -21,6 +22,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ### AUTH — Register → 201
+
+curl -i -X POST "{{baseUrl}}/auth/register" \
+  -H "Content-Type: {{contentType}}" \
+  -d '{"name":"{{name}}","email":"{{email}}","password":"{{password}}"}'
+
+### AUTH — Register without name → 422 VALIDATION_ERROR
 
 curl -i -X POST "{{baseUrl}}/auth/register" \
   -H "Content-Type: {{contentType}}" \
@@ -43,6 +50,19 @@ curl -i -X POST "{{baseUrl}}/auth/refresh" \
 curl -i -X POST "{{baseUrl}}/auth/logout" \
   -H "Content-Type: {{contentType}}" \
   -d '{"refresh_token":"{{refreshToken}}"}'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USERS  /users  (Bearer token required)
+# ─────────────────────────────────────────────────────────────────────────────
+
+### USERS — Current user → 200
+
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{accessToken}}
+
+### USERS — Current user without token → 401
+
+GET {{baseUrl}}/users/me
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CATEGORIES  /categories

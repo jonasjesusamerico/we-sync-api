@@ -47,11 +47,11 @@ func authDBAttrs(operation, table string) []attribute.KeyValue {
 }
 
 // CreateUser inserts a user using the write database.
-func (r *PostgresRepository) CreateUser(ctx context.Context, email, passwordHash string) (*User, error) {
+func (r *PostgresRepository) CreateUser(ctx context.Context, name, email, passwordHash string) (*User, error) {
 	const query = `
-		INSERT INTO users (email, password_hash, created_at, updated_at)
-		VALUES ($1, $2, NOW(), NOW())
-		RETURNING id, email, password_hash, created_at, updated_at`
+		INSERT INTO users (name, email, password_hash, created_at, updated_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		RETURNING id, name, email, password_hash, created_at, updated_at`
 
 	ctx, span := otel.Tracer(authRepoTracerName).Start(ctx, "db.users.insert")
 	defer span.End()
@@ -61,8 +61,9 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, email, passwordHash
 	defer cancel()
 
 	var user User
-	err := r.db.Write.QueryRowContext(ctx, query, email, passwordHash).Scan(
+	err := r.db.Write.QueryRowContext(ctx, query, name, email, passwordHash).Scan(
 		&user.ID,
+		&user.Name,
 		&user.Email,
 		&user.PasswordHash,
 		&user.CreatedAt,
@@ -88,7 +89,7 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, email, passwordHash
 // It returns (nil, nil) when no user exists for the email.
 func (r *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	const query = `
-		SELECT id, email, password_hash, created_at, updated_at
+		SELECT id, name, email, password_hash, created_at, updated_at
 		FROM users
 		WHERE email = $1`
 
@@ -102,6 +103,7 @@ func (r *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (
 	var user User
 	err := r.db.Write.QueryRowContext(ctx, query, email).Scan(
 		&user.ID,
+		&user.Name,
 		&user.Email,
 		&user.PasswordHash,
 		&user.CreatedAt,
@@ -115,6 +117,44 @@ func (r *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("authPostgresRepository.GetUserByEmail: %w", err)
+	}
+
+	span.SetAttributes(attribute.Bool("db.result.found", true))
+	return &user, nil
+}
+
+// GetUserByID retrieves a user's public data using the write database, because
+// the client calls GET /users/me right after register and login. The password
+// hash is not read. It returns (nil, nil) when no user exists for the id.
+func (r *PostgresRepository) GetUserByID(ctx context.Context, id int64) (*User, error) {
+	const query = `
+		SELECT id, name, email, created_at, updated_at
+		FROM users
+		WHERE id = $1`
+
+	ctx, span := otel.Tracer(authRepoTracerName).Start(ctx, "db.users.select_by_id")
+	defer span.End()
+	span.SetAttributes(authDBAttrs("SELECT", "users")...)
+
+	ctx, cancel := context.WithTimeout(ctx, authDBTimeout)
+	defer cancel()
+
+	var user User
+	err := r.db.Write.QueryRowContext(ctx, query, id).Scan(
+		&user.ID,
+		&user.Name,
+		&user.Email,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		span.SetAttributes(attribute.Bool("db.result.found", false))
+		return nil, nil
+	}
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("authPostgresRepository.GetUserByID: %w", err)
 	}
 
 	span.SetAttributes(attribute.Bool("db.result.found", true))

@@ -63,7 +63,7 @@ export function prepareUsers(count, purchasesPerUser) {
     for (let j = i; j < Math.min(i + BATCH, count); j++) {
       emails.push(`k6-${runId}-${j}@example.com`);
     }
-    postBatch(emails.map((email) => jsonRequest('/auth/register', { email, password }, 'setup register')), 201, 'register');
+    postBatch(emails.map((email) => jsonRequest('/auth/register', { name: 'k6 user', email, password }, 'setup register')), 201, 'register');
     const logins = postBatch(emails.map((email) => jsonRequest('/auth/login', { email, password }, 'setup login')), 200, 'login');
     logins.forEach((r, k) => {
       const tokens = r.json();

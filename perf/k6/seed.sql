@@ -1,4 +1,5 @@
 -- Stress test accounts for stress.js. LOCAL TEST DATABASES ONLY.
+-- Requires migration 000008 (users.name NOT NULL).
 --
 -- Creates accounts k6-load-1@example.com .. k6-load-<n>@example.com with
 -- <purchases> purchases each, and gives account i the refresh token
@@ -34,8 +35,8 @@
 
 BEGIN;
 
-INSERT INTO users (email, password_hash)
-SELECT format('k6-load-%s@example.com', i), '!no-password-login'
+INSERT INTO users (name, email, password_hash)
+SELECT format('k6 load %s', i), format('k6-load-%s@example.com', i), '!no-password-login'
 FROM generate_series(1, :n) AS i
 ON CONFLICT (email) DO NOTHING;
 

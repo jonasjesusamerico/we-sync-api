@@ -28,7 +28,7 @@ function jsonOrNull(res, expect) {
 
 export function register(email, password) {
   return request('POST', '/auth/register', {
-    body: { email, password }, name: 'POST /auth/register', kind: 'auth', expect: 201,
+    body: { name: 'k6 user', email, password }, name: 'POST /auth/register', kind: 'auth', expect: 201,
   });
 }
 

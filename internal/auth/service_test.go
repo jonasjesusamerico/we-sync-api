@@ -7,9 +7,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -22,13 +24,13 @@ const testSecret = "01234567890123456789012345678901"
 func TestAuthService_RegisterHashesPassword(t *testing.T) {
 	var stored string
 	svc := NewService(&mockAuthRepository{
-		CreateUserFn: func(_ context.Context, email, passwordHash string) (*User, error) {
+		CreateUserFn: func(_ context.Context, name, email, passwordHash string) (*User, error) {
 			stored = passwordHash
-			return &User{ID: 1, Email: email}, nil
+			return &User{ID: 1, Name: name, Email: email}, nil
 		},
 	}, []byte(testSecret), time.Minute, time.Hour)
-	got, err := svc.Register(context.Background(), &RegisterRequest{Email: "user@example.com", Password: "password123"})
-	if err != nil || got.ID != 1 || got.Email != "user@example.com" {
+	got, err := svc.Register(context.Background(), &RegisterRequest{Name: "Ana Souza", Email: "user@example.com", Password: "password123"})
+	if err != nil || got.ID != 1 || got.Name != "Ana Souza" || got.Email != "user@example.com" {
 		t.Fatalf("Register() = %+v, %v", got, err)
 	}
 	if stored == "password123" || bcrypt.CompareHashAndPassword([]byte(stored), []byte("password123")) != nil {
@@ -93,7 +95,7 @@ func TestAuthService_NormalizesEmailForRegisterAndLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := NewService(&mockAuthRepository{
-		CreateUserFn: func(_ context.Context, email, _ string) (*User, error) {
+		CreateUserFn: func(_ context.Context, _, email, _ string) (*User, error) {
 			registeredEmail = email
 			return &User{ID: 1, Email: email}, nil
 		},
@@ -102,7 +104,7 @@ func TestAuthService_NormalizesEmailForRegisterAndLogin(t *testing.T) {
 			return &User{ID: 1, PasswordHash: string(hash)}, nil
 		},
 	}, []byte(testSecret), time.Minute, time.Hour)
-	if _, err := svc.Register(context.Background(), &RegisterRequest{Email: " User@Example.COM ", Password: "password123"}); err != nil {
+	if _, err := svc.Register(context.Background(), &RegisterRequest{Name: "Ana Souza", Email: " User@Example.COM ", Password: "password123"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Login(context.Background(), &LoginRequest{Email: " User@Example.COM ", Password: "password123"}); err != nil {
@@ -179,6 +181,8 @@ func TestRecordAuthError_RecordsOnlyUnexpectedErrors(t *testing.T) {
 		"validation":          {apperrors.NewValidationError("email is invalid"), 0},
 		"invalid credentials": {newInvalidCredentialsError(), 0},
 		"wrapped conflict":    {fmt.Errorf("authService.Register: %w", apperrors.ErrConflict), 0},
+		"unauthorized":        {apperrors.ErrUnauthorized, 0},
+		"user not found":      {fmt.Errorf("user %w", apperrors.ErrNotFound), 0},
 		"unexpected":          {errors.New("connection refused"), 1},
 	}
 	for name, tt := range tests {
@@ -205,36 +209,42 @@ func TestRecordAuthError_RecordsOnlyUnexpectedErrors(t *testing.T) {
 
 func TestAuthService_Register_DuplicateEmail(t *testing.T) {
 	svc := newTestAuthService(&mockAuthRepository{
-		CreateUserFn: func(context.Context, string, string) (*User, error) {
+		CreateUserFn: func(context.Context, string, string, string) (*User, error) {
 			return nil, apperrors.ErrConflict
 		},
 	})
-	_, err := svc.Register(context.Background(), &RegisterRequest{Email: "user@example.com", Password: "password123"})
+	_, err := svc.Register(context.Background(), &RegisterRequest{Name: "Ana Souza", Email: "user@example.com", Password: "password123"})
 	if !errors.Is(err, apperrors.ErrConflict) {
 		t.Fatalf("Register() error = %v, want ErrConflict", err)
 	}
 }
 
 func TestAuthService_Register_InvalidInput(t *testing.T) {
-	tests := map[string]RegisterRequest{
-		"invalid email":  {Email: "not-an-email", Password: "password123"},
-		"email too long": {Email: strings.Repeat("a", 250) + "@x.io", Password: "password123"},
-		"short password": {Email: "user@example.com", Password: "short"},
-		"long password":  {Email: "user@example.com", Password: strings.Repeat("a", 73)},
-		"empty fields":   {},
+	tests := map[string]struct {
+		req     RegisterRequest
+		wantMsg string
+	}{
+		"invalid email":  {RegisterRequest{Name: "Ana Souza", Email: "not-an-email", Password: "password123"}, "email is invalid"},
+		"email too long": {RegisterRequest{Name: "Ana Souza", Email: strings.Repeat("a", 250) + "@x.io", Password: "password123"}, "email is invalid"},
+		"short password": {RegisterRequest{Name: "Ana Souza", Email: "user@example.com", Password: "short"}, "password must be between 8 and 72 bytes"},
+		"long password":  {RegisterRequest{Name: "Ana Souza", Email: "user@example.com", Password: strings.Repeat("a", 73)}, "password must be between 8 and 72 bytes"},
+		"empty fields":   {RegisterRequest{}, "name must be between 2 and 60 characters"},
 	}
-	for name, req := range tests {
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			called := false
 			svc := newTestAuthService(&mockAuthRepository{
-				CreateUserFn: func(context.Context, string, string) (*User, error) {
+				CreateUserFn: func(context.Context, string, string, string) (*User, error) {
 					called = true
 					return &User{ID: 1}, nil
 				},
 			})
-			_, err := svc.Register(context.Background(), &req)
+			_, err := svc.Register(context.Background(), &tc.req)
 			if !errors.Is(err, apperrors.ErrValidation) {
 				t.Fatalf("Register() error = %v, want ErrValidation", err)
+			}
+			if err.Error() != tc.wantMsg {
+				t.Fatalf("Register() error = %q, want %q", err.Error(), tc.wantMsg)
 			}
 			if called {
 				t.Fatal("repository must not be called for invalid input")
@@ -419,7 +429,7 @@ func TestService_Login_ContextDoneWhileWaitingForPasswordSlot(t *testing.T) {
 
 func TestService_Register_ContextDoneWhileWaitingForPasswordSlot(t *testing.T) {
 	svc := NewService(&mockAuthRepository{
-		CreateUserFn: func(context.Context, string, string) (*User, error) {
+		CreateUserFn: func(context.Context, string, string, string) (*User, error) {
 			t.Fatal("CreateUser must not be called without a password hash")
 			return nil, nil
 		},
@@ -429,7 +439,7 @@ func TestService_Register_ContextDoneWhileWaitingForPasswordSlot(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := svc.Register(ctx, &RegisterRequest{Email: "user@example.com", Password: "password123"})
+	_, err := svc.Register(ctx, &RegisterRequest{Name: "Ana Souza", Email: "user@example.com", Password: "password123"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Register() error = %v, want context.Canceled", err)
 	}
@@ -462,5 +472,213 @@ func TestService_Login_ConcurrentCallsReleaseSlots(t *testing.T) {
 	}
 	if n := len(svc.passwordSlots); n != 0 {
 		t.Fatalf("slots still held after all logins = %d, want 0", n)
+	}
+}
+
+// recordingRegisterRepo returns a repository whose CreateUser records the
+// arguments it receives and echoes them back as the stored user.
+func recordingRegisterRepo(called *bool, gotName, gotEmail, gotHash *string) *mockAuthRepository {
+	return &mockAuthRepository{
+		CreateUserFn: func(_ context.Context, name, email, passwordHash string) (*User, error) {
+			*called = true
+			*gotName, *gotEmail, *gotHash = name, email, passwordHash
+			return &User{ID: 1, Name: name, Email: email}, nil
+		},
+	}
+}
+
+func TestService_Register_NameRules(t *testing.T) {
+	rejected := map[string]string{
+		"empty":           "",
+		"spaces":          "   ",
+		"tab and newline": "\t\n",
+		"one char":        "A",
+		"one char padded": " A ",
+		"61 ascii":        strings.Repeat("a", 61),
+		"61 accented":     strings.Repeat("ç", 61),
+	}
+	for name, input := range rejected {
+		t.Run("rejects "+name, func(t *testing.T) {
+			var called bool
+			var gotName, gotEmail, gotHash string
+			svc := withMinPasswordCost(newTestAuthService(recordingRegisterRepo(&called, &gotName, &gotEmail, &gotHash)))
+			_, err := svc.Register(context.Background(), &RegisterRequest{Name: input, Email: "ana@exemplo.com", Password: "Senha123!"})
+			if !errors.Is(err, apperrors.ErrValidation) {
+				t.Fatalf("Register() error = %v, want ErrValidation", err)
+			}
+			if err.Error() != "name must be between 2 and 60 characters" {
+				t.Fatalf("Register() error = %q", err.Error())
+			}
+			if called {
+				t.Fatal("repository must not be called for an invalid name")
+			}
+		})
+	}
+
+	accepted := map[string]struct{ input, want string }{
+		"two runes three bytes": {"Jô", "Jô"},
+		"two ascii":             {"Ab", "Ab"},
+		"60 ascii":              {strings.Repeat("a", 60), strings.Repeat("a", 60)},
+		"60 accented":           {strings.Repeat("ç", 60), strings.Repeat("ç", 60)},
+		"60 accented padded":    {"  " + strings.Repeat("ç", 60) + "  ", strings.Repeat("ç", 60)},
+	}
+	for name, tc := range accepted {
+		t.Run("accepts "+name, func(t *testing.T) {
+			var called bool
+			var gotName, gotEmail, gotHash string
+			svc := withMinPasswordCost(newTestAuthService(recordingRegisterRepo(&called, &gotName, &gotEmail, &gotHash)))
+			if _, err := svc.Register(context.Background(), &RegisterRequest{Name: tc.input, Email: "ana@exemplo.com", Password: "Senha123!"}); err != nil {
+				t.Fatalf("Register() error = %v", err)
+			}
+			if !called || gotName != tc.want {
+				t.Fatalf("repository name = %q (called=%v), want %q", gotName, called, tc.want)
+			}
+		})
+	}
+}
+
+func TestService_Register_TrimsName(t *testing.T) {
+	var called bool
+	var gotName, gotEmail, gotHash string
+	svc := withMinPasswordCost(newTestAuthService(recordingRegisterRepo(&called, &gotName, &gotEmail, &gotHash)))
+	got, err := svc.Register(context.Background(), &RegisterRequest{Name: "  Ana  ", Email: "ana@exemplo.com", Password: "Senha123!"})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if gotName != "Ana" || got.Name != "Ana" {
+		t.Fatalf("repository name = %q, response name = %q, want %q", gotName, got.Name, "Ana")
+	}
+}
+
+func TestService_Register_KeepsNameCase(t *testing.T) {
+	var called bool
+	var gotName, gotEmail, gotHash string
+	svc := withMinPasswordCost(newTestAuthService(recordingRegisterRepo(&called, &gotName, &gotEmail, &gotHash)))
+	if _, err := svc.Register(context.Background(), &RegisterRequest{Name: "ana DE souza", Email: "ana@exemplo.com", Password: "Senha123!"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if gotName != "ana DE souza" {
+		t.Fatalf("repository name = %q, want %q", gotName, "ana DE souza")
+	}
+}
+
+func TestService_Register_ValidationOrder(t *testing.T) {
+	tests := map[string]struct {
+		req     RegisterRequest
+		wantMsg string
+	}{
+		"name first":    {RegisterRequest{Name: "A", Email: "x", Password: "short"}, "name must be between 2 and 60 characters"},
+		"then email":    {RegisterRequest{Name: "Ana Souza", Email: "x", Password: "short"}, "email is invalid"},
+		"then password": {RegisterRequest{Name: "Ana Souza", Email: "ana@exemplo.com", Password: "short"}, "password must be between 8 and 72 bytes"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestAuthService(&mockAuthRepository{
+				CreateUserFn: func(context.Context, string, string, string) (*User, error) {
+					t.Fatal("repository must not be called for invalid input")
+					return nil, nil
+				},
+			})
+			_, err := svc.Register(context.Background(), &tc.req)
+			if !errors.Is(err, apperrors.ErrValidation) || err.Error() != tc.wantMsg {
+				t.Fatalf("Register() error = %v, want %q", err, tc.wantMsg)
+			}
+		})
+	}
+}
+
+func TestService_Register_ResponseHasName(t *testing.T) {
+	svc := withMinPasswordCost(newTestAuthService(&mockAuthRepository{
+		CreateUserFn: func(context.Context, string, string, string) (*User, error) {
+			return &User{ID: 42, Name: "Ana Souza", Email: "ana@exemplo.com"}, nil
+		},
+	}))
+	got, err := svc.Register(context.Background(), &RegisterRequest{Name: "Ana Souza", Email: "ana@exemplo.com", Password: "Senha123!"})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	want := RegisterResponse{ID: 42, Name: "Ana Souza", Email: "ana@exemplo.com"}
+	if *got != want {
+		t.Fatalf("Register() = %+v, want %+v", *got, want)
+	}
+}
+
+func TestService_Register_PassesArgumentsInOrder(t *testing.T) {
+	var called bool
+	var gotName, gotEmail, gotHash string
+	svc := withMinPasswordCost(newTestAuthService(recordingRegisterRepo(&called, &gotName, &gotEmail, &gotHash)))
+	if _, err := svc.Register(context.Background(), &RegisterRequest{Name: "Ana Souza", Email: " Ana@Exemplo.com ", Password: "Senha123!"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if gotName != "Ana Souza" || gotEmail != "ana@exemplo.com" {
+		t.Fatalf("repository got name=%q email=%q", gotName, gotEmail)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(gotHash), []byte("Senha123!")) != nil {
+		t.Fatal("password hash argument is not a valid bcrypt hash of the password")
+	}
+}
+
+func TestService_ValidateNameProperty(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		name := strings.TrimSpace(rapid.String().Draw(t, "name"))
+		n := utf8.RuneCountInString(name)
+		err := validateName(name)
+		if (n < minNameRunes || n > maxNameRunes) != (err != nil) {
+			t.Fatalf("validation mismatch for %d runes: %v", n, err)
+		}
+	})
+}
+
+func TestService_Me_ReturnsUserFromContext(t *testing.T) {
+	var gotID int64
+	svc := newTestAuthService(&mockAuthRepository{
+		GetUserByIDFn: func(_ context.Context, id int64) (*User, error) {
+			gotID = id
+			return &User{ID: 42, Name: "Ana Souza", Email: "ana@exemplo.com", PasswordHash: "hash"}, nil
+		},
+	})
+	got, err := svc.Me(identity.WithUserID(context.Background(), 42))
+	if err != nil {
+		t.Fatalf("Me() error = %v", err)
+	}
+	if gotID != 42 {
+		t.Fatalf("repository id = %d, want the id from the context (42)", gotID)
+	}
+	want := UserResponse{ID: 42, Name: "Ana Souza", Email: "ana@exemplo.com"}
+	if *got != want {
+		t.Fatalf("Me() = %+v, want %+v", *got, want)
+	}
+}
+
+func TestService_Me_NoUserInContext(t *testing.T) {
+	svc := newTestAuthService(&mockAuthRepository{
+		GetUserByIDFn: func(context.Context, int64) (*User, error) {
+			t.Fatal("repository must not be called without a user in the context")
+			return nil, nil
+		},
+	})
+	if _, err := svc.Me(context.Background()); !errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Fatalf("Me() error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestService_Me_UserNotFound(t *testing.T) {
+	svc := newTestAuthService(&mockAuthRepository{
+		GetUserByIDFn: func(context.Context, int64) (*User, error) { return nil, nil },
+	})
+	_, err := svc.Me(identity.WithUserID(context.Background(), 42))
+	if !errors.Is(err, apperrors.ErrNotFound) || err.Error() != "user not found" {
+		t.Fatalf("Me() error = %v, want ErrNotFound with message %q", err, "user not found")
+	}
+}
+
+func TestService_Me_RepositoryError(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	svc := newTestAuthService(&mockAuthRepository{
+		GetUserByIDFn: func(context.Context, int64) (*User, error) { return nil, dbErr },
+	})
+	_, err := svc.Me(identity.WithUserID(context.Background(), 42))
+	if !errors.Is(err, dbErr) || errors.Is(err, apperrors.ErrNotFound) || errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Fatalf("Me() error = %v, want wrapped repository error", err)
 	}
 }

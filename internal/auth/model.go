@@ -9,6 +9,7 @@ import (
 // User represents a registered user.
 type User struct {
 	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -16,7 +17,9 @@ type User struct {
 }
 
 // RegisterRequest is the payload accepted by POST /auth/register.
+// Name is trimmed and must have 2 to 60 characters (Unicode code points).
 type RegisterRequest struct {
+	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
@@ -42,6 +45,14 @@ type TokenResponse struct {
 // RegisterResponse is returned after a successful user registration.
 type RegisterResponse struct {
 	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// UserResponse is returned by GET /users/me: the authenticated user's public data.
+type UserResponse struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
 	Email string `json:"email"`
 }
 

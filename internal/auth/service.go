@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel"
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
@@ -30,6 +32,12 @@ const authTracerName = "we-sync-api/auth"
 
 // defaultPasswordCost is the bcrypt cost used for stored password hashes.
 const defaultPasswordCost = 12
+
+// Name limits in characters (Unicode code points), not bytes, so accented names are not cut short (RN-01).
+const (
+	minNameRunes = 2
+	maxNameRunes = 60
+)
 
 var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
@@ -94,6 +102,10 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	if req == nil {
 		return nil, recordAuthError(span, apperrors.NewValidationError("request is required"))
 	}
+	name := strings.TrimSpace(req.Name)
+	if err := validateName(name); err != nil {
+		return nil, recordAuthError(span, err)
+	}
 	email := normalizeEmail(req.Email)
 	if err := validateEmail(email); err != nil {
 		return nil, recordAuthError(span, err)
@@ -112,7 +124,7 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register hash password: %w", err))
 	}
 
-	user, err := s.repo.CreateUser(ctx, email, string(passwordHash))
+	user, err := s.repo.CreateUser(ctx, name, email, string(passwordHash))
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register: %w", err))
 	}
@@ -125,7 +137,29 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		attribute.Int64("user.id", user.ID),
 		attribute.String("auth.method", "register"),
 	)
-	return &RegisterResponse{ID: user.ID, Email: user.Email}, nil
+	return &RegisterResponse{ID: user.ID, Name: user.Name, Email: user.Email}, nil
+}
+
+// Me returns the public data of the authenticated user. The user id comes only
+// from the context, so a caller can never read another user.
+func (s *Service) Me(ctx context.Context) (*UserResponse, error) {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Me")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return nil, recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	span.SetAttributes(attribute.Int64("user.id", userID))
+
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.Me: %w", err))
+	}
+	if user == nil {
+		return nil, recordAuthError(span, fmt.Errorf("user %w", apperrors.ErrNotFound))
+	}
+	return &UserResponse{ID: user.ID, Name: user.Name, Email: user.Email}, nil
 }
 
 // Login validates credentials and returns a JWT access token and refresh token.
@@ -263,6 +297,14 @@ func newRefreshToken() (string, error) {
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// validateName expects an already trimmed name.
+func validateName(name string) error {
+	if n := utf8.RuneCountInString(name); n < minNameRunes || n > maxNameRunes {
+		return apperrors.NewValidationError("name must be between 2 and 60 characters")
+	}
+	return nil
 }
 
 func validateEmail(email string) error {

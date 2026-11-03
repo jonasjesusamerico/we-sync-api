@@ -85,6 +85,7 @@ func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.JWTWithConfig(jwtSecret, auth.JWTIssuer, auth.JWTAudience, 24*time.Hour))
+			r.Get("/users/me", h.Auth.Me)
 			r.Route("/purchases", func(r chi.Router) {
 				r.Get("/", h.Purchase.List)
 				r.Post("/", h.Purchase.Create)

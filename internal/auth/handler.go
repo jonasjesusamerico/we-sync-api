@@ -18,6 +18,7 @@ type service interface {
 	Login(ctx context.Context, req *LoginRequest) (*TokenResponse, error)
 	Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error)
 	Logout(ctx context.Context, req *RefreshRequest) error
+	Me(ctx context.Context) (*UserResponse, error)
 }
 
 type Handler struct {
@@ -30,14 +31,16 @@ func NewHandler(svc service) *Handler {
 
 // Register creates a new user.
 // @Summary Register a user
+// @Description Creates a user. name is trimmed and must have 2 to 60 characters; email is trimmed and lowercased.
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Param body body RegisterRequest true "Registration data"
 // @Success 201 {object} RegisterResponse
-// @Failure 400 {object} httputil.APIError
-// @Failure 409 {object} httputil.APIError
-// @Failure 422 {object} httputil.APIError
+// @Failure 400 {object} httputil.APIError "Invalid request body"
+// @Failure 409 {object} httputil.APIError "Email already registered"
+// @Failure 422 {object} httputil.APIError "Validation error (name, email or password)"
+// @Failure 500 {object} httputil.APIError "Internal server error"
 // @Router /auth/register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
@@ -136,6 +139,25 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Me returns the authenticated user.
+// @Summary Get the authenticated user
+// @Description Returns the id, name and e-mail of the user identified by the access token.
+// @Tags users
+// @Produce json
+// @Success 200 {object} UserResponse
+// @Failure 401 {object} httputil.APIError "Missing or invalid authentication token"
+// @Failure 404 {object} httputil.APIError "User not found"
+// @Failure 500 {object} httputil.APIError "Internal server error"
+// @Router /users/me [get]
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	response, err := h.svc.Me(r.Context())
+	if err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, response)
+}
+
 func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, apperrors.ErrValidation):
@@ -145,7 +167,7 @@ func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error)
 	case errors.Is(err, apperrors.ErrConflict):
 		httputil.WriteConflict(w, "email already registered")
 	case errors.Is(err, apperrors.ErrNotFound):
-		httputil.WriteNotFound(w, err.Error())
+		httputil.WriteNotFound(w, "user not found")
 	default:
 		logger.FromContext(r.Context()).Error("internal error in auth handler", "error", err)
 		httputil.WriteInternalError(w)

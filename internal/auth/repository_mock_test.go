@@ -6,19 +6,20 @@ import (
 )
 
 type mockAuthRepository struct {
-	CreateUserFn         func(context.Context, string, string) (*User, error)
+	CreateUserFn         func(context.Context, string, string, string) (*User, error)
 	GetUserByEmailFn     func(context.Context, string) (*User, error)
+	GetUserByIDFn        func(context.Context, int64) (*User, error)
 	CreateRefreshTokenFn func(context.Context, int64, string, time.Time) error
 	GetRefreshTokenFn    func(context.Context, string) (*RefreshToken, error)
 	RotateRefreshTokenFn func(context.Context, int64, int64, string, time.Time) error
 	RevokeRefreshTokenFn func(context.Context, string) error
 }
 
-func (m *mockAuthRepository) CreateUser(ctx context.Context, email, passwordHash string) (*User, error) {
+func (m *mockAuthRepository) CreateUser(ctx context.Context, name, email, passwordHash string) (*User, error) {
 	if m.CreateUserFn == nil {
 		return nil, nil
 	}
-	return m.CreateUserFn(ctx, email, passwordHash)
+	return m.CreateUserFn(ctx, name, email, passwordHash)
 }
 
 func (m *mockAuthRepository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
@@ -26,6 +27,13 @@ func (m *mockAuthRepository) GetUserByEmail(ctx context.Context, email string) (
 		return nil, nil
 	}
 	return m.GetUserByEmailFn(ctx, email)
+}
+
+func (m *mockAuthRepository) GetUserByID(ctx context.Context, id int64) (*User, error) {
+	if m.GetUserByIDFn == nil {
+		return nil, nil
+	}
+	return m.GetUserByIDFn(ctx, id)
 }
 
 func (m *mockAuthRepository) CreateRefreshToken(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error {
