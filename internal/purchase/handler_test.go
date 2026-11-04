@@ -31,6 +31,15 @@ type mockPurchaseService struct {
 	ListFn    func(ctx context.Context, filter ListFilter) (*PaginatedResult, error)
 	UpdateFn  func(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
 	DeleteFn  func(ctx context.Context, id int64) error
+
+	SummaryFn func(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error)
+}
+
+func (m *mockPurchaseService) Summary(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error) {
+	if m.SummaryFn == nil {
+		return &MonthSummary{}, nil
+	}
+	return m.SummaryFn(ctx, year, month, today)
 }
 
 func (m *mockPurchaseService) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purchase, error) {
@@ -326,7 +335,7 @@ func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/purchases?month=7&year=2024&status=PAID&category_id=3&payment_method_id=5&page=2&page_size=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/purchases?month=7&year=2024&status=PAID&category_id=3&payment_method_id=5&page=2&page_size=10&q=Pad%C3%A1ria%20", nil)
 	rec := httptest.NewRecorder()
 
 	h.List(rec, req)
@@ -354,6 +363,92 @@ func TestHandler_List_FiltersPassedCorrectly(t *testing.T) {
 	}
 	if capturedFilter.PageSize != 10 {
 		t.Errorf("expected PageSize=10, got %d", capturedFilter.PageSize)
+	}
+	// The handler passes q as received: trimming is a rule of the service.
+	if capturedFilter.Search != "Padária " {
+		t.Errorf("expected Search=%q, got %q", "Padária ", capturedFilter.Search)
+	}
+}
+
+func TestHandler_List_NoSearch(t *testing.T) {
+	captured := ListFilter{Search: "sentinel"}
+	h := NewHandler(&mockPurchaseService{
+		ListFn: func(_ context.Context, f ListFilter) (*PaginatedResult, error) {
+			captured = f
+			return &PaginatedResult{Items: []Purchase{}}, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/purchases?month=11&year=2026", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if captured.Search != "" {
+		t.Errorf("expected empty Search, got %q", captured.Search)
+	}
+}
+
+func TestHandler_List_SearchTooLong(t *testing.T) {
+	h := NewHandler(&mockPurchaseService{
+		ListFn: func(context.Context, ListFilter) (*PaginatedResult, error) {
+			return nil, apperrors.NewValidationError("q must be at most 255 characters")
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/purchases?q="+strings.Repeat("a", 256), nil))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", rec.Code)
+	}
+	body := decodeError(t, rec.Body)
+	if body.Code != httputil.ErrCodeValidation || body.Message != "q must be at most 255 characters" {
+		t.Errorf("body = %+v", body)
+	}
+}
+
+func TestHandler_List_TotalAmountJSON(t *testing.T) {
+	tests := []struct {
+		name   string
+		amount decimal.Decimal
+		want   string
+	}{
+		{"trailing zeros removed", decimal.RequireFromString("263.40"), "263.4"},
+		{"zero", decimal.Zero, "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(&mockPurchaseService{
+				ListFn: func(context.Context, ListFilter) (*PaginatedResult, error) {
+					return &PaginatedResult{Items: []Purchase{}, TotalAmount: tt.amount, Page: 1, PageSize: 8}, nil
+				},
+			})
+			rec := httptest.NewRecorder()
+			h.List(rec, httptest.NewRequest(http.MethodGet, "/purchases", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rec.Code)
+			}
+
+			var body map[string]any
+			if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := body["total_amount"].(string); !ok || got != tt.want {
+				t.Errorf("total_amount = %#v, want string %q", body["total_amount"], tt.want)
+			}
+			wantKeys := []string{"items", "total", "total_amount", "page", "page_size", "total_pages"}
+			if len(body) != len(wantKeys) {
+				t.Errorf("keys = %v, want exactly %v", body, wantKeys)
+			}
+			for _, k := range wantKeys {
+				if _, ok := body[k]; !ok {
+					t.Errorf("missing key %q", k)
+				}
+			}
+			if items, ok := body["items"].([]any); !ok || len(items) != 0 {
+				t.Errorf("items = %#v, want []", body["items"])
+			}
+		})
 	}
 }
 
@@ -568,5 +663,175 @@ func TestHandler_Delete_InvalidID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+
+func intPtr(n int) *int       { return &n }
+func int64Ptr(n int64) *int64 { return &n }
+
+// ca03Summary is the contract example (CA-03, today 2026-11-10).
+func ca03Summary() *MonthSummary {
+	return &MonthSummary{
+		Year: 2026, Month: 11, PurchaseCount: 3, Spent: decimal.RequireFromString("150.00"),
+		Comparison: Comparison{
+			Period: PeriodUntilDay, UntilDay: intPtr(10), PreviousYear: 2026, PreviousMonth: 10,
+			CurrentAmount: decimal.RequireFromString("100.00"), PreviousAmount: decimal.RequireFromString("200.00"),
+			Result: ResultLess, Percent: int64Ptr(50),
+		},
+	}
+}
+
+func assertExactKeys(t *testing.T, obj map[string]any, keys ...string) {
+	t.Helper()
+	if len(obj) != len(keys) {
+		t.Errorf("keys = %v, want exactly %v", obj, keys)
+	}
+	for _, k := range keys {
+		if _, ok := obj[k]; !ok {
+			t.Errorf("missing key %q", k)
+		}
+	}
+}
+
+func TestHandler_Summary_Success(t *testing.T) {
+	h := NewHandler(&mockPurchaseService{
+		SummaryFn: func(_ context.Context, year, month int, today time.Time) (*MonthSummary, error) {
+			if year != 2026 || month != 11 || !today.Equal(time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)) {
+				t.Errorf("Summary(%d, %d, %v)", year, month, today)
+			}
+			return ca03Summary(), nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.Summary(rec, httptest.NewRequest(http.MethodGet, "/purchases/summary?year=2026&month=11&today=2026-11-10", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	assertExactKeys(t, body, "year", "month", "purchase_count", "spent", "comparison")
+	cmp, _ := body["comparison"].(map[string]any)
+	assertExactKeys(t, cmp, "period", "until_day", "previous_year", "previous_month",
+		"current_amount", "previous_amount", "result", "percent")
+
+	if body["spent"] != "150" || body["purchase_count"] != float64(3) {
+		t.Errorf("spent = %#v, purchase_count = %#v", body["spent"], body["purchase_count"])
+	}
+	if cmp["until_day"] != float64(10) || cmp["percent"] != float64(50) || cmp["result"] != "LESS" ||
+		cmp["period"] != "UNTIL_DAY" || cmp["current_amount"] != "100" || cmp["previous_amount"] != "200" {
+		t.Errorf("comparison = %#v", cmp)
+	}
+}
+
+func TestHandler_Summary_NullFields(t *testing.T) {
+	h := NewHandler(&mockPurchaseService{
+		SummaryFn: func(context.Context, int, int, time.Time) (*MonthSummary, error) {
+			return &MonthSummary{Year: 2026, Month: 9, Comparison: Comparison{
+				Period: PeriodFullMonth, PreviousYear: 2026, PreviousMonth: 8, Result: ResultNoBase,
+			}}, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.Summary(rec, httptest.NewRequest(http.MethodGet, "/purchases/summary?year=2026&month=9&today=2026-11-10", nil))
+
+	var body struct {
+		Comparison map[string]any `json:"comparison"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"until_day", "percent"} {
+		v, ok := body.Comparison[k]
+		if !ok || v != nil {
+			t.Errorf("%s: present=%v value=%#v, want present and null", k, ok, v)
+		}
+	}
+}
+
+func TestHandler_Summary_InvalidQuery(t *testing.T) {
+	const (
+		yearMsg  = "year must be an integer between 1 and 9999"
+		monthMsg = "month must be an integer between 1 and 12"
+		todayMsg = "today must be a date in YYYY-MM-DD format"
+	)
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{"month=11&today=2026-11-10", yearMsg},
+		{"year=0&month=11&today=2026-11-10", yearMsg},
+		{"year=10000&month=11&today=2026-11-10", yearMsg},
+		{"year=abc&month=11&today=2026-11-10", yearMsg},
+		{"year=2026&today=2026-11-10", monthMsg},
+		{"year=2026&month=0&today=2026-11-10", monthMsg},
+		{"year=2026&month=13&today=2026-11-10", monthMsg},
+		{"year=2026&month=11", todayMsg},
+		{"year=2026&month=11&today=2026-11-31", todayMsg},
+		{"year=2026&month=11&today=10/11/2026", todayMsg},
+		{"year=2026&month=11&today=2026-11-10T00:00:00Z", todayMsg},
+		{"year=abc&month=13", yearMsg},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			h := NewHandler(&mockPurchaseService{
+				SummaryFn: func(context.Context, int, int, time.Time) (*MonthSummary, error) {
+					t.Error("service must not be called")
+					return nil, nil
+				},
+			})
+			rec := httptest.NewRecorder()
+			h.Summary(rec, httptest.NewRequest(http.MethodGet, "/purchases/summary?"+tt.query, nil))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", rec.Code)
+			}
+			body := decodeError(t, rec.Body)
+			if body.Code != httputil.ErrCodeBadRequest || body.Message != tt.want {
+				t.Errorf("body = %+v, want message %q", body, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandler_Summary_Errors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+		wantMsg  string
+	}{
+		{"unauthorized", apperrors.ErrUnauthorized, http.StatusUnauthorized, httputil.ErrCodeUnauthorized, "authentication required"},
+		{"validation", apperrors.NewValidationError("month must be an integer between 1 and 12"),
+			http.StatusUnprocessableEntity, httputil.ErrCodeValidation, "month must be an integer between 1 and 12"},
+		{"internal", errors.New("pq: connection refused"), http.StatusInternalServerError, httputil.ErrCodeInternalServerError, "internal server error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(&mockPurchaseService{
+				SummaryFn: func(context.Context, int, int, time.Time) (*MonthSummary, error) { return nil, tt.err },
+			})
+			rec := httptest.NewRecorder()
+			h.Summary(rec, httptest.NewRequest(http.MethodGet, "/purchases/summary?year=2026&month=11&today=2026-11-10", nil))
+
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+			raw := rec.Body.String()
+			if strings.Contains(raw, "pq:") {
+				t.Errorf("internal detail leaked: %s", raw)
+			}
+			body := decodeError(t, bytes.NewBufferString(raw))
+			if body.Code != tt.wantBody || body.Message != tt.wantMsg {
+				t.Errorf("body = %+v", body)
+			}
+		})
 	}
 }

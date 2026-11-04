@@ -8,6 +8,8 @@
 #   category_id    → int64                 (ID of a global category or one of the user's)
 #   status         → PENDING | PAID | CANCELED
 #   payment_method_id → int64              (ID of a global payment method or one of the user's)
+#   total_amount   → string decimal        (sum of the filter without CANCELED)
+#   q              → text searched in the description, ignoring case and accents (max 255)
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
@@ -421,6 +423,46 @@ Authorization: Bearer {{accessToken}}
 GET {{baseUrl}}/purchases?month=7&year=2024&status=PENDING&category_id=3&payment_method_id=4&page=1&page_size=10
 Authorization: Bearer {{accessToken}}
 
+### LIST — Month of the new front (page_size 8) → 200 with total and total_amount
+
+GET {{baseUrl}}/purchases?year=2026&month=11&page=1&page_size=8
+Authorization: Bearer {{accessToken}}
+
+### LIST — Search ignoring accents and case → 200
+
+GET {{baseUrl}}/purchases?year=2026&month=11&q=padaria&page_size=8
+Authorization: Bearer {{accessToken}}
+
+### LIST — Search with uppercase and no accent → 200
+
+GET {{baseUrl}}/purchases?year=2026&month=11&q=SAO&page_size=8
+Authorization: Bearer {{accessToken}}
+
+### LIST — Search with a literal percent sign → 200
+
+GET {{baseUrl}}/purchases?year=2026&month=12&q=50%25&page_size=8
+Authorization: Bearer {{accessToken}}
+
+### LIST — Search with only spaces is the same as no search → 200
+
+GET {{baseUrl}}/purchases?year=2026&month=11&q=%20%20&page_size=8
+Authorization: Bearer {{accessToken}}
+
+### LIST — Search combined with status and category → 200
+
+GET {{baseUrl}}/purchases?year=2026&month=9&q=uber&status=PENDING&category_id=2&page=2&page_size=8
+Authorization: Bearer {{accessToken}}
+
+### LIST — Canceled filter → 200 with total_amount "0"
+
+GET {{baseUrl}}/purchases?year=2026&month=11&status=CANCELED&page_size=8
+Authorization: Bearer {{accessToken}}
+
+### LIST — Validation: q above 255 characters → 422
+
+GET {{baseUrl}}/purchases?year=2026&month=11&q=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&page_size=8
+Authorization: Bearer {{accessToken}}
+
 ### LIST — Page 2 with 5 items per page
 
 GET {{baseUrl}}/purchases?page=2&page_size=5
@@ -434,6 +476,41 @@ Authorization: Bearer {{accessToken}}
 ### LIST — Validation: page_size above limit (>100) → 422
 
 GET {{baseUrl}}/purchases?page_size=200
+Authorization: Bearer {{accessToken}}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SUMMARY  GET /purchases/summary  → 200 | 400
+# today is the client's local date; it only decides the period (UNTIL_DAY or FULL_MONTH).
+# ─────────────────────────────────────────────────────────────────────────────
+
+### SUMMARY — Current month, compared up to today's day → 200 UNTIL_DAY
+
+GET {{baseUrl}}/purchases/summary?year=2026&month=11&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+### SUMMARY — Other month, whole months → 200 FULL_MONTH
+
+GET {{baseUrl}}/purchases/summary?year=2026&month=9&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+### SUMMARY — Previous month shorter (whole February) → 200
+
+GET {{baseUrl}}/purchases/summary?year=2027&month=3&today=2027-03-31
+Authorization: Bearer {{accessToken}}
+
+### SUMMARY — January of year 1 has no previous month → 200 NO_BASE
+
+GET {{baseUrl}}/purchases/summary?year=1&month=1&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+### SUMMARY — Validation: missing today → 400
+
+GET {{baseUrl}}/purchases/summary?year=2026&month=11
+Authorization: Bearer {{accessToken}}
+
+### SUMMARY — Validation: month 13 → 400
+
+GET {{baseUrl}}/purchases/summary?year=2026&month=13&today=2026-11-10
 Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────

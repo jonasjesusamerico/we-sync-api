@@ -207,12 +207,21 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 	defer cancel()
 
 	// No JOIN: category_id is a NOT NULL foreign key, so joining cannot change the count.
-	countQuery := "SELECT COUNT(*) FROM purchase_entries pe " + where
+	// The amount reads the same rows, so the count and the sum always agree on the filter.
+	countQuery := `SELECT COUNT(*), COALESCE(SUM(pe.amount) FILTER (WHERE pe.status <> 'CANCELED'), 0)
+		FROM purchase_entries pe ` + where
 	var total int
-	if err := r.db.Read.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+	var totalAmountStr string
+	if err := r.db.Read.QueryRowContext(ctx, countQuery, args...).Scan(&total, &totalAmountStr); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("purchasePostgresRepository.List count: %w", err)
+	}
+	totalAmount, err := decimal.NewFromString(totalAmountStr)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("purchasePostgresRepository.List parse total amount: %w", err)
 	}
 
 	offset := (filter.Page - 1) * filter.PageSize
@@ -292,12 +301,71 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 	)
 
 	return &PaginatedResult{
-		Items:      items,
-		Total:      total,
-		Page:       filter.Page,
-		PageSize:   filter.PageSize,
-		TotalPages: totalPages,
+		Items:       items,
+		Total:       total,
+		TotalAmount: totalAmount,
+		Page:        filter.Page,
+		PageSize:    filter.PageSize,
+		TotalPages:  totalPages,
 	}, nil
+}
+
+// Summarize sums the user's purchases of the month and of the compared periods in one query.
+// All bounds are inclusive dates, so December of 9999 never needs the year 10000. The
+// previous month is read with purchase_date < MonthStart; without a previous month the
+// scan starts at MonthStart and that sum is always 0, with no date of year 0 sent.
+func (r *PostgresRepository) Summarize(ctx context.Context, userID int64, ranges SummaryRanges) (*SummarySums, error) {
+	const query = `
+		SELECT
+			COUNT(*) FILTER (WHERE pe.purchase_date >= $3),
+			COALESCE(SUM(pe.amount) FILTER (WHERE pe.purchase_date >= $3 AND pe.status <> 'CANCELED'), 0),
+			COALESCE(SUM(pe.amount) FILTER (WHERE pe.purchase_date >= $3 AND pe.purchase_date <= $5
+			                                  AND pe.status <> 'CANCELED'), 0),
+			COALESCE(SUM(pe.amount) FILTER (WHERE pe.purchase_date < $3 AND pe.purchase_date <= $6
+			                                  AND pe.status <> 'CANCELED'), 0)
+		FROM  purchase_entries pe
+		WHERE pe.user_id = $1 AND pe.purchase_date >= $2 AND pe.purchase_date <= $4`
+
+	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.select_summary")
+	defer span.End()
+	span.SetAttributes(dbAttrs("SELECT", "purchase_entries")...)
+
+	ctx, cancel := context.WithTimeout(ctx, dbTimeout)
+	defer cancel()
+
+	scanStart, previousEnd := ranges.MonthStart, ranges.MonthStart
+	if ranges.HasPrevious {
+		scanStart, previousEnd = ranges.PreviousStart, ranges.PreviousEnd
+	}
+
+	var sums SummarySums
+	var spentStr, currentStr, previousStr string
+	err := r.db.Read.QueryRowContext(ctx, query,
+		userID, scanStart, ranges.MonthStart, ranges.MonthEnd, ranges.CurrentEnd, previousEnd,
+	).Scan(&sums.MonthCount, &spentStr, &currentStr, &previousStr)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("purchasePostgresRepository.Summarize: %w", err)
+	}
+
+	for _, field := range []struct {
+		raw string
+		dst *decimal.Decimal
+	}{
+		{spentStr, &sums.MonthSpent},
+		{currentStr, &sums.CurrentAmount},
+		{previousStr, &sums.PreviousAmount},
+	} {
+		*field.dst, err = decimal.NewFromString(field.raw)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("purchasePostgresRepository.Summarize parse amount: %w", err)
+		}
+	}
+
+	return &sums, nil
 }
 
 // listWhere builds the WHERE clause and its positional arguments for List.
@@ -332,6 +400,11 @@ func listWhere(filter ListFilter) (string, []any) {
 	}
 	if filter.PaymentMethodID > 0 {
 		add("pe.payment_method_id = $%d", filter.PaymentMethodID)
+	}
+	if filter.Search != "" {
+		// strpos has no wildcards, so %, _ and \ in the search are literal. LIKE with an
+		// escape would not be enough: unaccent.rules maps fullwidth forms such as ％ to %.
+		add("strpos(lower(unaccent(pe.description)), lower(unaccent($%d))) > 0", filter.Search)
 	}
 
 	return "WHERE " + strings.Join(conditions, " AND "), args

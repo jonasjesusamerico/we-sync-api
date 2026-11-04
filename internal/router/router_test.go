@@ -15,6 +15,7 @@ import (
 	"github.com/jonasjesusamerico/we-sync-api/internal/auth"
 	"github.com/jonasjesusamerico/we-sync-api/internal/httputil"
 	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
+	"github.com/jonasjesusamerico/we-sync-api/internal/purchase"
 )
 
 // testJWTSecret is a fake 32-byte secret used only by these tests.
@@ -162,5 +163,90 @@ func TestRouter_UsersMe_MethodNotAllowed(t *testing.T) {
 	}
 	if stub.meCalled {
 		t.Fatal("Me must not be called for POST")
+	}
+}
+
+// stubPurchaseService implements the purchase handler's service interface. Only Summary
+// is expected to be reached; it records the user id found in the request context.
+type stubPurchaseService struct {
+	t             *testing.T
+	summaryCalled bool
+	summaryUserID int64
+}
+
+func (s *stubPurchaseService) Create(context.Context, *purchase.CreatePurchaseRequest) (*purchase.Purchase, error) {
+	s.t.Fatal("Create must not be called")
+	return nil, nil
+}
+
+func (s *stubPurchaseService) GetByID(context.Context, int64) (*purchase.Purchase, error) {
+	s.t.Fatal("GetByID must not be called: /summary must not fall into /{id}")
+	return nil, nil
+}
+
+func (s *stubPurchaseService) List(context.Context, purchase.ListFilter) (*purchase.PaginatedResult, error) {
+	s.t.Fatal("List must not be called")
+	return nil, nil
+}
+
+func (s *stubPurchaseService) Update(context.Context, int64, *purchase.UpdatePurchaseRequest) (*purchase.Purchase, error) {
+	s.t.Fatal("Update must not be called")
+	return nil, nil
+}
+
+func (s *stubPurchaseService) Delete(context.Context, int64) error {
+	s.t.Fatal("Delete must not be called")
+	return nil
+}
+
+func (s *stubPurchaseService) Summary(ctx context.Context, year, month int, _ time.Time) (*purchase.MonthSummary, error) {
+	s.summaryCalled = true
+	s.summaryUserID, _ = identity.UserIDFromContext(ctx)
+	return &purchase.MonthSummary{Year: year, Month: month}, nil
+}
+
+func newPurchaseTestRouter(t *testing.T) (http.Handler, *stubPurchaseService) {
+	t.Helper()
+	stub := &stubPurchaseService{t: t}
+	h := New(
+		Handlers{Purchase: purchase.NewHandler(stub)},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"test",
+		false,
+		false,
+		[]string{"http://localhost:3000"},
+		[]byte(testJWTSecret),
+	)
+	return h, stub
+}
+
+func TestRouter_PurchasesSummary_RoutesToSummary(t *testing.T) {
+	h, stub := newPurchaseTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/purchases/summary?year=2026&month=11&today=2026-11-10", nil)
+	req.Header.Set("Authorization", "Bearer "+validToken(t, "42"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !stub.summaryCalled || stub.summaryUserID != 42 {
+		t.Fatalf("summaryCalled=%v userID=%d, want the id from the token (42)", stub.summaryCalled, stub.summaryUserID)
+	}
+}
+
+func TestRouter_PurchasesSummary_RequiresToken(t *testing.T) {
+	h, stub := newPurchaseTestRouter(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/purchases/summary?year=2026&month=11&today=2026-11-10", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if body := decodeError(t, rec); body.Message != "missing authentication token" {
+		t.Fatalf("message = %q", body.Message)
+	}
+	if stub.summaryCalled {
+		t.Fatal("Summary must not be called without a token")
 	}
 }

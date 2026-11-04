@@ -690,7 +690,7 @@ const docTemplate = `{
         },
         "/purchases": {
             "get": {
-                "description": "Returns a paginated and filtered list of purchase entries.",
+                "description": "Returns a paginated and filtered list of purchase entries, newest first, with the count and the\namount (without CANCELED) of the whole filter.",
                 "produces": [
                     "application/json"
                 ],
@@ -735,6 +735,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "Text searched anywhere in the description, ignoring case and accents (trimmed; at most 255 characters)",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "description": "Page number (default 1)",
                         "name": "page",
@@ -756,6 +762,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid query parameter",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "page_size above 100 or q above 255 characters",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -812,6 +824,61 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/purchases/summary": {
+            "get": {
+                "description": "Spent amount of the month (PAID + PENDING, every day of the month) and the comparison with the\nprevious month over the same period: up to today's day when the month is today's month, else the\nwhole months. today is the client's local date and only decides the period.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "purchases"
+                ],
+                "summary": "Month spending summary",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Year (1-9999)",
+                        "name": "year",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Month (1-12)",
+                        "name": "month",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client local date (YYYY-MM-DD)",
+                        "name": "today",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/purchase.MonthSummary"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid year, month or today",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -1209,6 +1276,67 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.Comparison": {
+            "type": "object",
+            "properties": {
+                "current_amount": {
+                    "type": "number"
+                },
+                "percent": {
+                    "description": "null only in NO_BASE",
+                    "type": "integer"
+                },
+                "period": {
+                    "$ref": "#/definitions/purchase.ComparisonPeriod"
+                },
+                "previous_amount": {
+                    "type": "number"
+                },
+                "previous_month": {
+                    "type": "integer"
+                },
+                "previous_year": {
+                    "type": "integer"
+                },
+                "result": {
+                    "$ref": "#/definitions/purchase.ComparisonResult"
+                },
+                "until_day": {
+                    "description": "null in FULL_MONTH",
+                    "type": "integer"
+                }
+            }
+        },
+        "purchase.ComparisonPeriod": {
+            "type": "string",
+            "enum": [
+                "UNTIL_DAY",
+                "FULL_MONTH"
+            ],
+            "x-enum-varnames": [
+                "PeriodUntilDay",
+                "PeriodFullMonth"
+            ]
+        },
+        "purchase.ComparisonResult": {
+            "type": "string",
+            "enum": [
+                "MORE",
+                "LESS",
+                "EQUAL",
+                "NO_BASE"
+            ],
+            "x-enum-comments": {
+                "ResultEqual": "rounded percent is 0",
+                "ResultNoBase": "previous amount is 0: no percent"
+            },
+            "x-enum-varnames": [
+                "ResultMore",
+                "ResultLess",
+                "ResultEqual",
+                "ResultNoBase"
+            ]
+        },
         "purchase.CreatePurchaseRequest": {
             "type": "object",
             "properties": {
@@ -1240,6 +1368,28 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.MonthSummary": {
+            "type": "object",
+            "properties": {
+                "comparison": {
+                    "$ref": "#/definitions/purchase.Comparison"
+                },
+                "month": {
+                    "type": "integer"
+                },
+                "purchase_count": {
+                    "description": "every status",
+                    "type": "integer"
+                },
+                "spent": {
+                    "description": "PAID + PENDING of the whole month",
+                    "type": "number"
+                },
+                "year": {
+                    "type": "integer"
+                }
+            }
+        },
         "purchase.PaginatedResult": {
             "type": "object",
             "properties": {
@@ -1257,6 +1407,9 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                },
+                "total_amount": {
+                    "type": "number"
                 },
                 "total_pages": {
                     "type": "integer"

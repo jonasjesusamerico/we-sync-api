@@ -105,18 +105,97 @@ type ListFilter struct {
 	Status          Status
 	CategoryID      int64
 	PaymentMethodID int64
-	Page            int
-	PageSize        int
+	// Search is matched anywhere in the description, ignoring case and accents.
+	// The service trims it; empty means no search.
+	Search   string
+	Page     int
+	PageSize int
 }
+
+// maxSearchLength is counted in characters (runes), after trimming, like the description.
+const maxSearchLength = 255
 
 // MaxPageSize is the upper bound accepted by the service for PageSize.
 const MaxPageSize = 100
 
 // PaginatedResult wraps a page of purchase entries with pagination metadata.
+// Total counts every status; TotalAmount sums the same filter without CANCELED.
 type PaginatedResult struct {
-	Items      []Purchase `json:"items"`
-	Total      int        `json:"total"`
-	Page       int        `json:"page"`
-	PageSize   int        `json:"page_size"`
-	TotalPages int        `json:"total_pages"`
+	Items       []Purchase      `json:"items"`
+	Total       int             `json:"total"`
+	TotalAmount decimal.Decimal `json:"total_amount"`
+	Page        int             `json:"page"`
+	PageSize    int             `json:"page_size"`
+	TotalPages  int             `json:"total_pages"`
 }
+
+// ---------------------------------------------------------------------------
+// Month summary (GET /purchases/summary)
+// ---------------------------------------------------------------------------
+
+// ComparisonPeriod tells which days of both months the comparison covers.
+type ComparisonPeriod string
+
+const (
+	// PeriodUntilDay compares day 1 up to today's day (the requested month is today's month).
+	PeriodUntilDay ComparisonPeriod = "UNTIL_DAY"
+	// PeriodFullMonth compares both whole months.
+	PeriodFullMonth ComparisonPeriod = "FULL_MONTH"
+)
+
+// ComparisonResult is the outcome of comparing the current amount with the previous one.
+type ComparisonResult string
+
+const (
+	ResultMore   ComparisonResult = "MORE"
+	ResultLess   ComparisonResult = "LESS"
+	ResultEqual  ComparisonResult = "EQUAL"   // rounded percent is 0
+	ResultNoBase ComparisonResult = "NO_BASE" // previous amount is 0: no percent
+)
+
+// Comparison compares the month with the previous one over the same period.
+type Comparison struct {
+	Period         ComparisonPeriod `json:"period"`
+	UntilDay       *int             `json:"until_day"` // null in FULL_MONTH
+	PreviousYear   int              `json:"previous_year"`
+	PreviousMonth  int              `json:"previous_month"`
+	CurrentAmount  decimal.Decimal  `json:"current_amount"`
+	PreviousAmount decimal.Decimal  `json:"previous_amount"`
+	Result         ComparisonResult `json:"result"`
+	Percent        *int64           `json:"percent"` // null only in NO_BASE
+}
+
+// MonthSummary is the response of GET /purchases/summary.
+type MonthSummary struct {
+	Year          int             `json:"year"`
+	Month         int             `json:"month"`
+	PurchaseCount int             `json:"purchase_count"` // every status
+	Spent         decimal.Decimal `json:"spent"`          // PAID + PENDING of the whole month
+	Comparison    Comparison      `json:"comparison"`
+}
+
+// SummaryRanges are the inclusive date bounds (UTC midnight) that Summarize sums over.
+// PreviousStart and PreviousEnd are only meaningful when HasPrevious is true: January of
+// year 1 has no previous month.
+type SummaryRanges struct {
+	MonthStart    time.Time // first day of the month
+	MonthEnd      time.Time // last day of the month
+	CurrentEnd    time.Time // last day of the compared current period
+	HasPrevious   bool
+	PreviousStart time.Time // first day of the previous month
+	PreviousEnd   time.Time // last day of the compared previous period
+}
+
+// SummarySums are the sums Summarize reads; amounts exclude CANCELED.
+type SummarySums struct {
+	MonthCount     int             // purchases in the month, every status
+	MonthSpent     decimal.Decimal // whole month
+	CurrentAmount  decimal.Decimal // MonthStart..CurrentEnd
+	PreviousAmount decimal.Decimal // PreviousStart..PreviousEnd; zero without a previous month
+}
+
+// Bounds of GET /purchases/summary; time.Date would silently normalize values out of range.
+const (
+	minSummaryYear = 1
+	maxSummaryYear = 9999
+)

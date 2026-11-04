@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel"
@@ -172,6 +173,12 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (*PaginatedResult
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
+	filter.Search = strings.TrimSpace(filter.Search)
+	if utf8.RuneCountInString(filter.Search) > maxSearchLength {
+		err := apperrors.NewValidationError("q must be at most %d characters", maxSearchLength)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
 
 	span.SetAttributes(
 		attribute.Int("purchase.filter.page", filter.Page),
@@ -180,6 +187,8 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (*PaginatedResult
 		attribute.Int("purchase.filter.year", filter.Year),
 		attribute.String("purchase.filter.status", string(filter.Status)),
 		attribute.Int64("purchase.filter.payment_method_id", filter.PaymentMethodID),
+		// Only whether there is a search: the text is free input and never goes to telemetry.
+		attribute.Bool("purchase.filter.has_search", filter.Search != ""),
 	)
 
 	result, err := s.repo.List(ctx, filter)
@@ -192,6 +201,151 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (*PaginatedResult
 	span.SetAttributes(attribute.Int("purchase.result.total", result.Total))
 
 	return result, nil
+}
+
+// summaryPlan is what Summary decides before reading the database.
+type summaryPlan struct {
+	ranges        SummaryRanges
+	period        ComparisonPeriod
+	untilDay      *int
+	previousYear  int
+	previousMonth int
+}
+
+// summaryRanges plans the month (year, month) given the client's local date today.
+// year and month must already be in range. Pure: no clock, no database.
+func summaryRanges(year, month int, today time.Time) summaryPlan {
+	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	// AddDate(0, 1, -1) is the last day of the month; December of 9999 stays in 9999.
+	monthEnd := monthStart.AddDate(0, 1, -1)
+
+	plan := summaryPlan{previousYear: year, previousMonth: month - 1}
+	if month == 1 {
+		plan.previousYear, plan.previousMonth = year-1, 12
+	}
+	hasPrevious := year > minSummaryYear || month > 1
+
+	var previousStart, previousMonthEnd time.Time
+	if hasPrevious {
+		previousStart = time.Date(plan.previousYear, time.Month(plan.previousMonth), 1, 0, 0, 0, 0, time.UTC)
+		previousMonthEnd = monthStart.AddDate(0, 0, -1)
+	}
+
+	currentEnd, previousEnd := monthEnd, previousMonthEnd
+	if today.Year() == year && int(today.Month()) == month {
+		day := today.Day()
+		plan.period = PeriodUntilDay
+		plan.untilDay = &day
+		currentEnd = time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+		if hasPrevious {
+			// RN-02: when the previous month has no such day, it counts whole.
+			previousEnd = time.Date(plan.previousYear, time.Month(plan.previousMonth),
+				min(day, previousMonthEnd.Day()), 0, 0, 0, 0, time.UTC)
+		}
+	} else {
+		plan.period = PeriodFullMonth
+	}
+
+	plan.ranges = SummaryRanges{
+		MonthStart:  monthStart,
+		MonthEnd:    monthEnd,
+		CurrentEnd:  currentEnd,
+		HasPrevious: hasPrevious,
+	}
+	if hasPrevious {
+		plan.ranges.PreviousStart = previousStart
+		plan.ranges.PreviousEnd = previousEnd
+	}
+	return plan
+}
+
+var hundred = decimal.NewFromInt(100)
+
+// compare returns the result and the rounded percent of current against previous.
+// percent is nil only for NO_BASE. Both amounts are >= 0.
+func compare(current, previous decimal.Decimal) (ComparisonResult, *int64) {
+	if previous.Sign() <= 0 {
+		return ResultNoBase, nil
+	}
+	// Round(0) rounds half away from zero, which for a value >= 0 is "0.5 up" (RN-02).
+	// An exact k.5 has a finite representation, so Div (16 digits) keeps it exact.
+	n := current.Sub(previous).Abs().Mul(hundred).Div(previous).Round(0).IntPart()
+	switch {
+	case n == 0:
+		return ResultEqual, &n
+	case current.GreaterThan(previous):
+		return ResultMore, &n
+	default:
+		return ResultLess, &n
+	}
+}
+
+// Summary returns the month's spending and its comparison with the previous month (RN-01..RN-03).
+// today is the client's local date and only decides the period; the data is always the
+// context user's, so it is not checked against the server clock.
+func (s *Service) Summary(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Summary")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return nil, apperrors.ErrUnauthorized
+	}
+	// The handler already answers 400; this guards other callers, since time.Date would
+	// normalize month 13 into January of the next year and sum the wrong month.
+	if year < minSummaryYear || year > maxSummaryYear {
+		err := apperrors.NewValidationError("year must be an integer between %d and %d", minSummaryYear, maxSummaryYear)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if month < 1 || month > 12 {
+		err := apperrors.NewValidationError("month must be an integer between 1 and 12")
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	plan := summaryRanges(year, month, today)
+	span.SetAttributes(
+		attribute.Int("purchase.summary.year", year),
+		attribute.Int("purchase.summary.month", month),
+		attribute.String("purchase.summary.period", string(plan.period)),
+	)
+
+	sums, err := s.repo.Summarize(ctx, userID, plan.ranges)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("purchaseService.Summary: %w", err)
+	}
+	if sums == nil {
+		err := fmt.Errorf("purchaseService.Summary: repository returned no sums")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	previous := sums.PreviousAmount
+	if !plan.ranges.HasPrevious {
+		previous = decimal.Zero
+	}
+	result, percent := compare(sums.CurrentAmount, previous)
+
+	return &MonthSummary{
+		Year:          year,
+		Month:         month,
+		PurchaseCount: sums.MonthCount,
+		Spent:         sums.MonthSpent,
+		Comparison: Comparison{
+			Period:         plan.period,
+			UntilDay:       plan.untilDay,
+			PreviousYear:   plan.previousYear,
+			PreviousMonth:  plan.previousMonth,
+			CurrentAmount:  sums.CurrentAmount,
+			PreviousAmount: previous,
+			Result:         result,
+			Percent:        percent,
+		},
+	}, nil
 }
 
 // Update validates and applies changes to an existing purchase entry.

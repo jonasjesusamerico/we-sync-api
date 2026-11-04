@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
@@ -23,6 +24,7 @@ type service interface {
 	List(ctx context.Context, filter ListFilter) (*PaginatedResult, error)
 	Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
 	Delete(ctx context.Context, id int64) error
+	Summary(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error)
 }
 
 // Handler handles HTTP requests for purchase entries.
@@ -68,7 +70,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 // List handles GET /purchases
 //
 // @Summary     List purchase entries
-// @Description Returns a paginated and filtered list of purchase entries.
+// @Description Returns a paginated and filtered list of purchase entries, newest first, with the count and the
+// @Description amount (without CANCELED) of the whole filter.
 // @Tags        purchases
 // @Produce     json
 // @Param       month             query    int    false "Month (1-12)"
@@ -76,17 +79,22 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 // @Param       status            query    string false "Status" Enums(PENDING, PAID, CANCELED)
 // @Param       category_id       query    int    false "Category ID (exact match)"
 // @Param       payment_method_id query    int    false "Payment method ID (exact match)"
+// @Param       q                 query    string false "Text searched anywhere in the description, ignoring case and accents (trimmed; at most 255 characters)"
 // @Param       page              query    int    false "Page number (default 1)"
 // @Param       page_size         query    int    false "Items per page (default 20, max 100)"
 // @Success     200               {object} PaginatedResult
 // @Failure     400               {object} httputil.APIError "Invalid query parameter"
+// @Failure     422               {object} httputil.APIError "page_size above 100 or q above 255 characters"
 // @Failure     500               {object} httputil.APIError "Internal server error"
 // @Router      /purchases [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
+	// q is not validated here: any text is a valid format, and trimming and the
+	// length limit are business rules of the service.
 	filter := ListFilter{
 		Status: Status(q.Get("status")),
+		Search: q.Get("q"),
 	}
 
 	if v := q.Get("month"); v != "" {
@@ -150,6 +158,50 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, result)
+}
+
+// Summary handles GET /purchases/summary
+//
+// @Summary     Month spending summary
+// @Description Spent amount of the month (PAID + PENDING, every day of the month) and the comparison with the
+// @Description previous month over the same period: up to today's day when the month is today's month, else the
+// @Description whole months. today is the client's local date and only decides the period.
+// @Tags        purchases
+// @Produce     json
+// @Param       year  query    int    true "Year (1-9999)"
+// @Param       month query    int    true "Month (1-12)"
+// @Param       today query    string true "Client local date (YYYY-MM-DD)"
+// @Success     200   {object} MonthSummary
+// @Failure     400   {object} httputil.APIError "Missing or invalid year, month or today"
+// @Failure     500   {object} httputil.APIError "Internal server error"
+// @Router      /purchases/summary [get]
+func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	// A missing parameter is invalid too, with the same message.
+	year, err := strconv.Atoi(q.Get("year"))
+	if err != nil || year < minSummaryYear || year > maxSummaryYear {
+		httputil.WriteBadRequest(w, "year must be an integer between 1 and 9999")
+		return
+	}
+	month, err := strconv.Atoi(q.Get("month"))
+	if err != nil || month < 1 || month > 12 {
+		httputil.WriteBadRequest(w, "month must be an integer between 1 and 12")
+		return
+	}
+	today, err := time.Parse(dateLayout, q.Get("today"))
+	if err != nil {
+		httputil.WriteBadRequest(w, "today must be a date in YYYY-MM-DD format")
+		return
+	}
+
+	summary, err := h.svc.Summary(r.Context(), year, month, today)
+	if err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, summary)
 }
 
 // GetByID handles GET /purchases/{id}
