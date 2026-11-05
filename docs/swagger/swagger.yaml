@@ -1,5 +1,17 @@
 basePath: /api/v1
 definitions:
+  auth.ChangePasswordRequest:
+    properties:
+      current_password:
+        type: string
+      new_password:
+        type: string
+    type: object
+  auth.DeleteAccountRequest:
+    properties:
+      password:
+        type: string
+    type: object
   auth.LoginRequest:
     properties:
       email:
@@ -30,6 +42,14 @@ definitions:
       name:
         type: string
     type: object
+  auth.Theme:
+    enum:
+    - LIGHT
+    - DARK
+    type: string
+    x-enum-varnames:
+    - ThemeLight
+    - ThemeDark
   auth.TokenResponse:
     properties:
       access_token:
@@ -37,6 +57,16 @@ definitions:
       refresh_token:
         type: string
       token_type:
+        type: string
+    type: object
+  auth.UpdatePreferencesRequest:
+    properties:
+      theme:
+        $ref: '#/definitions/auth.Theme'
+    type: object
+  auth.UpdateProfileRequest:
+    properties:
+      name:
         type: string
     type: object
   auth.UserResponse:
@@ -47,11 +77,20 @@ definitions:
         type: integer
       name:
         type: string
+      theme:
+        $ref: '#/definitions/auth.Theme'
     type: object
   category.Category:
     properties:
+      archived_at:
+        description: null = active
+        type: string
+      color:
+        $ref: '#/definitions/category.Color'
       created_at:
         type: string
+      icon:
+        $ref: '#/definitions/category.Icon'
       id:
         type: integer
       is_global:
@@ -65,6 +104,10 @@ definitions:
     type: object
   category.CategorySummary:
     properties:
+      color:
+        $ref: '#/definitions/category.Color'
+      icon:
+        $ref: '#/definitions/category.Icon'
       id:
         type: integer
       is_global:
@@ -72,13 +115,63 @@ definitions:
       name:
         type: string
     type: object
+  category.Color:
+    enum:
+    - FOOD
+    - TRANSPORT
+    - HOME
+    - HEALTH
+    - EDUCATION
+    - LEISURE
+    - NEUTRAL
+    type: string
+    x-enum-varnames:
+    - ColorFood
+    - ColorTransport
+    - ColorHome
+    - ColorHealth
+    - ColorEducation
+    - ColorLeisure
+    - ColorNeutral
   category.CreateCategoryRequest:
     properties:
+      color:
+        $ref: '#/definitions/category.Color'
+      icon:
+        $ref: '#/definitions/category.Icon'
       name:
         type: string
     type: object
+  category.Icon:
+    enum:
+    - TAG
+    - HEART
+    - SMILE
+    - BOOK
+    - CAR
+    - HOUSE
+    - FOOD
+    - CARD
+    - GIFT
+    - SPARKLE
+    type: string
+    x-enum-varnames:
+    - IconTag
+    - IconHeart
+    - IconSmile
+    - IconBook
+    - IconCar
+    - IconHouse
+    - IconFood
+    - IconCard
+    - IconGift
+    - IconSparkle
   category.UpdateCategoryRequest:
     properties:
+      color:
+        $ref: '#/definitions/category.Color'
+      icon:
+        $ref: '#/definitions/category.Icon'
       name:
         type: string
     type: object
@@ -96,6 +189,9 @@ definitions:
     type: object
   paymentmethod.PaymentMethod:
     properties:
+      archived_at:
+        description: null = active
+        type: string
       created_at:
         type: string
       id:
@@ -402,8 +498,9 @@ paths:
       - auth
   /categories:
     get:
-      description: Returns all categories visible to the authenticated user (global
-        + personal).
+      description: |-
+        Returns all categories visible to the authenticated user (global + personal), archived ones
+        included; archived_at tells them apart.
       produces:
       - application/json
       responses:
@@ -427,7 +524,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new personal category for the authenticated user.
+      description: |-
+        Creates a personal category for the authenticated user, or reactivates the user's archived
+        category with the same name (case- and accent-insensitive): the stored name is kept and the
+        icon and color sent are applied.
       parameters:
       - description: Category data
         in: body
@@ -438,6 +538,10 @@ paths:
       produces:
       - application/json
       responses:
+        "200":
+          description: Reactivated
+          schema:
+            $ref: '#/definitions/category.Category'
         "201":
           description: Created
           schema:
@@ -451,7 +555,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "409":
-          description: Name already exists
+          description: DEFAULT_NAME_CONFLICT or NAME_CONFLICT
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":
@@ -466,50 +570,12 @@ paths:
       tags:
       - categories
   /categories/{id}:
-    delete:
-      description: Removes a personal category owned by the authenticated user.
-      parameters:
-      - description: Category ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Invalid ID
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "403":
-          description: Cannot delete a global category
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "404":
-          description: Not found
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "409":
-          description: Category in use by purchase entries
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-      summary: Delete a personal category
-      tags:
-      - categories
     put:
       consumes:
       - application/json
-      description: Renames a personal category owned by the authenticated user.
+      description: |-
+        Replaces the name, icon and color of a personal category (active or archived) owned by the
+        authenticated user.
       parameters:
       - description: Category ID
         in: path
@@ -538,7 +604,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "403":
-          description: Cannot modify a global category
+          description: Cannot change a default category
           schema:
             $ref: '#/definitions/httputil.APIError'
         "404":
@@ -546,7 +612,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "409":
-          description: Name already exists
+          description: DEFAULT_NAME_CONFLICT, NAME_CONFLICT or ARCHIVED_NAME_CONFLICT
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":
@@ -560,10 +626,88 @@ paths:
       summary: Update a personal category
       tags:
       - categories
+  /categories/{id}/archive:
+    delete:
+      description: |-
+        Reactivates an archived personal category. Reactivating an active category is a no-op
+        (idempotent).
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot change a default category
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Reactivate a personal category
+      tags:
+      - categories
+    put:
+      description: |-
+        Archives a personal category. Its purchases do not change. Archiving an archived category
+        is a no-op (idempotent).
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot change a default category
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Archive a personal category
+      tags:
+      - categories
   /payment-methods:
     get:
-      description: Returns all payment methods visible to the authenticated user (global
-        + personal).
+      description: |-
+        Returns all payment methods visible to the authenticated user (global + personal), archived ones
+        included; archived_at tells them apart.
       produces:
       - application/json
       responses:
@@ -587,9 +731,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new personal payment method for the authenticated user.
+      description: |-
+        Creates a personal payment method for the authenticated user, or reactivates the user's archived
+        payment method with the same name (case- and accent-insensitive), keeping the stored name.
+        Fields other than name (such as icon and color) are ignored.
       parameters:
-      - description: PaymentMethod data
+      - description: Payment method data
         in: body
         name: body
         required: true
@@ -598,6 +745,10 @@ paths:
       produces:
       - application/json
       responses:
+        "200":
+          description: Reactivated
+          schema:
+            $ref: '#/definitions/paymentmethod.PaymentMethod'
         "201":
           description: Created
           schema:
@@ -611,7 +762,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "409":
-          description: Name already exists
+          description: DEFAULT_NAME_CONFLICT or NAME_CONFLICT
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":
@@ -626,50 +777,11 @@ paths:
       tags:
       - payment-methods
   /payment-methods/{id}:
-    delete:
-      description: Removes a personal payment method owned by the authenticated user.
-      parameters:
-      - description: Payment method ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Invalid ID
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "403":
-          description: Cannot delete a global payment method
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "404":
-          description: Not found
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "409":
-          description: PaymentMethod in use by purchase entries
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/httputil.APIError'
-      summary: Delete a personal payment method
-      tags:
-      - payment-methods
     put:
       consumes:
       - application/json
-      description: Renames a personal payment method owned by the authenticated user.
+      description: Renames a personal payment method (active or archived) owned by
+        the authenticated user.
       parameters:
       - description: Payment method ID
         in: path
@@ -698,7 +810,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "403":
-          description: Cannot modify a global payment method
+          description: Cannot change a default payment method
           schema:
             $ref: '#/definitions/httputil.APIError'
         "404":
@@ -706,7 +818,7 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
         "409":
-          description: Name already exists
+          description: DEFAULT_NAME_CONFLICT, NAME_CONFLICT or ARCHIVED_NAME_CONFLICT
           schema:
             $ref: '#/definitions/httputil.APIError'
         "422":
@@ -718,6 +830,83 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
       summary: Update a personal payment method
+      tags:
+      - payment-methods
+  /payment-methods/{id}/archive:
+    delete:
+      description: |-
+        Reactivates an archived personal payment method. Reactivating an active payment method is a no-op
+        (idempotent).
+      parameters:
+      - description: Payment method ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot change a default payment method
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Reactivate a personal payment method
+      tags:
+      - payment-methods
+    put:
+      description: |-
+        Archives a personal payment method. Its purchases do not change. Archiving an archived payment method
+        is a no-op (idempotent).
+      parameters:
+      - description: Payment method ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid ID
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: Cannot change a default payment method
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Archive a personal payment method
       tags:
       - payment-methods
   /purchases:
@@ -966,9 +1155,51 @@ paths:
       tags:
       - purchases
   /users/me:
+    delete:
+      consumes:
+      - application/json
+      description: |-
+        Deletes the account and all its data (purchases, own categories and payment methods, sessions). It cannot be undone.
+        The password confirms the operation and is never trimmed.
+      parameters:
+      - description: Password confirmation
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.DeleteAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid or missing request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Missing or invalid authentication token
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: 'INVALID_PASSWORD: the password does not match'
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Delete the account
+      tags:
+      - users
     get:
-      description: Returns the id, name and e-mail of the user identified by the access
-        token.
+      description: |-
+        Returns the id, name, e-mail and theme of the user identified by the access token.
+        theme is LIGHT, DARK or null when never chosen in the account.
       produces:
       - application/json
       responses:
@@ -989,6 +1220,128 @@ paths:
           schema:
             $ref: '#/definitions/httputil.APIError'
       summary: Get the authenticated user
+      tags:
+      - users
+  /users/me/password:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Checks current_password and stores new_password (8 to 72 bytes, never trimmed, different from the current one).
+        Every other session ends: previous refresh tokens are revoked and previous access tokens get 401.
+        Returns a new token pair for the caller.
+      parameters:
+      - description: Current and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Missing or invalid authentication token
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "403":
+          description: 'INVALID_PASSWORD: the current password does not match'
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Change the password
+      tags:
+      - users
+  /users/me/preferences:
+    put:
+      consumes:
+      - application/json
+      description: Saves the theme in the account (LIGHT or DARK).
+      parameters:
+      - description: Preferences
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.UpdatePreferencesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.UserResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Missing or invalid authentication token
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Update the preferences
+      tags:
+      - users
+  /users/me/profile:
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the name (trimmed, 2 to 60 characters). The e-mail never
+        changes: an email field in the body is ignored.'
+      parameters:
+      - description: Profile data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.UserResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "401":
+          description: Missing or invalid authentication token
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "422":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/httputil.APIError'
+      summary: Update the profile
       tags:
       - users
 schemes:

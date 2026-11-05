@@ -29,7 +29,15 @@ const (
 	ErrCodeUnauthorized          = "UNAUTHORIZED"
 	ErrCodeForbidden             = "FORBIDDEN"
 	ErrCodeConflict              = "CONFLICT"
-	ErrCodeInternalServerError   = "INTERNAL_SERVER_ERROR"
+	// INVALID_PASSWORD (403): the password sent to confirm an authenticated operation (password change,
+	// account deletion) does not match. Never 401: the client would take it for an expired session.
+	ErrCodeInvalidPassword = "INVALID_PASSWORD"
+	// Name conflicts of categories and payment methods (409), one code per case so the client picks the message:
+	// the name equals a default one, an own active one, or (on update) an own archived one.
+	ErrCodeDefaultNameConflict  = "DEFAULT_NAME_CONFLICT"
+	ErrCodeNameConflict         = "NAME_CONFLICT"
+	ErrCodeArchivedNameConflict = "ARCHIVED_NAME_CONFLICT"
+	ErrCodeInternalServerError  = "INTERNAL_SERVER_ERROR"
 )
 
 // WriteJSON encodes v as JSON and writes it to w with the given HTTP status code.

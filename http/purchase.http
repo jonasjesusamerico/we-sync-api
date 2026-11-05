@@ -10,6 +10,10 @@
 #   payment_method_id → int64              (ID of a global payment method or one of the user's)
 #   total_amount   → string decimal        (sum of the filter without CANCELED)
 #   q              → text searched in the description, ignoring case and accents (max 255)
+#   theme          → LIGHT | DARK | null (GET /users/me)
+#   icon           → TAG | HEART | SMILE | BOOK | CAR | HOUSE | FOOD | CARD | GIFT | SPARKLE
+#   color          → FOOD | TRANSPORT | HOME | HEALTH | EDUCATION | LEISURE (NEUTRAL only in responses)
+#   archived_at    → RFC 3339 or null
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
@@ -66,12 +70,122 @@ Authorization: Bearer {{accessToken}}
 
 GET {{baseUrl}}/users/me
 
+### USERS — Update profile → 200
+
+PUT {{baseUrl}}/users/me/profile
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Jonas Silva"
+}
+
+### USERS — Update profile ignores email → 200 (email unchanged)
+
+PUT {{baseUrl}}/users/me/profile
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Jonas Silva",
+  "email": "other@example.com"
+}
+
+### USERS — Validation: name with 1 character → 422
+
+PUT {{baseUrl}}/users/me/profile
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "J"
+}
+
+### USERS — Save theme → 200
+
+PUT {{baseUrl}}/users/me/preferences
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "theme": "DARK"
+}
+
+### USERS — Validation: lowercase theme → 422
+
+PUT {{baseUrl}}/users/me/preferences
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "theme": "dark"
+}
+
+### USERS — Change password → 200 with a new token pair
+# Other sessions of the user end (their tokens answer 401). Afterwards, set @accessToken to the returned
+# access_token and @password to the new password, or the next requests answer 401/403.
+
+PUT {{baseUrl}}/users/me/password
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "current_password": "{{password}}",
+  "new_password": "new-password-2026"
+}
+
+### USERS — Wrong current password → 403 INVALID_PASSWORD
+
+PUT {{baseUrl}}/users/me/password
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "current_password": "wrong-password",
+  "new_password": "new-password-2026"
+}
+
+### USERS — Same password → 422
+
+PUT {{baseUrl}}/users/me/password
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "current_password": "{{password}}",
+  "new_password": "{{password}}"
+}
+
+### USERS — Delete account with the wrong password → 403 INVALID_PASSWORD
+
+DELETE {{baseUrl}}/users/me
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "password": "wrong-password"
+}
+
+### USERS — Delete account → 204
+# Run last: it deletes the user and every purchase.
+
+DELETE {{baseUrl}}/users/me
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "password": "{{password}}"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CATEGORIES  /categories
 # All routes require a Bearer token.
+# Names are compared ignoring case and accents. Own categories are archived, not deleted:
+# PUT /categories/{id}/archive archives, DELETE /categories/{id}/archive reactivates.
+# The examples assume the first own category gets id 7 and the second id 8.
 # ─────────────────────────────────────────────────────────────────────────────
 
-### CATEGORIES — List all (global + personal) → 200
+### CATEGORIES — List all (global + personal, archived included) → 200
 
 GET {{baseUrl}}/categories
 Authorization: Bearer {{accessToken}}
@@ -83,62 +197,143 @@ Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Gas"
+  "name": "Pets",
+  "icon": "HEART",
+  "color": "LEISURE"
 }
 
-### CATEGORIES — Create category with duplicate name → 409
+### CATEGORIES — Create a second personal category → 201
 
 POST {{baseUrl}}/categories
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Gas"
+  "name": "Assinaturas",
+  "icon": "CARD",
+  "color": "HOME"
 }
 
-### CATEGORIES — Create category with a global category's name → 409
+### CATEGORIES — Create again with the same name → 409 NAME_CONFLICT
 
 POST {{baseUrl}}/categories
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Alimentação"
+  "name": "pets",
+  "icon": "HEART",
+  "color": "LEISURE"
 }
 
-### CATEGORIES — Rename personal category → 200
+### CATEGORIES — Create with a default category's name, ignoring accents → 409 DEFAULT_NAME_CONFLICT
+
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "saude",
+  "icon": "HEART",
+  "color": "HEALTH"
+}
+
+### CATEGORIES — Validation: name above 40 characters → 422
+
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "A category name that is longer than forty characters",
+  "icon": "TAG",
+  "color": "FOOD"
+}
+
+### CATEGORIES — Validation: NEUTRAL color → 422
+
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Gatos",
+  "icon": "HEART",
+  "color": "NEUTRAL"
+}
+
+### CATEGORIES — Update name, icon and color → 200
 
 PUT {{baseUrl}}/categories/7
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Fuel"
+  "name": "Animais",
+  "icon": "HOUSE",
+  "color": "HOME"
 }
 
-### CATEGORIES — Try to edit a global category → 403
+### CATEGORIES — Try to edit a default category → 403
 
 PUT {{baseUrl}}/categories/1
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Food"
+  "name": "Food",
+  "icon": "FOOD",
+  "color": "FOOD"
 }
 
-### CATEGORIES — Delete unused personal category → 204
+### CATEGORIES — Archive personal category → 204
+
+PUT {{baseUrl}}/categories/7/archive
+Authorization: Bearer {{accessToken}}
+
+### CATEGORIES — Archive again → 204 (idempotent)
+
+PUT {{baseUrl}}/categories/7/archive
+Authorization: Bearer {{accessToken}}
+
+### CATEGORIES — Rename to the name of an archived one → 409 ARCHIVED_NAME_CONFLICT
+
+PUT {{baseUrl}}/categories/8
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "animais",
+  "icon": "CARD",
+  "color": "HOME"
+}
+
+### CATEGORIES — Create with the name of an archived one → 200 (reactivated)
+# The stored name ("Animais") is kept; icon and color become the ones sent.
+
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "ANIMAIS",
+  "icon": "SMILE",
+  "color": "LEISURE"
+}
+
+### CATEGORIES — Reactivate → 204
+
+DELETE {{baseUrl}}/categories/7/archive
+Authorization: Bearer {{accessToken}}
+
+### CATEGORIES — Try to archive a default category → 403
+
+PUT {{baseUrl}}/categories/1/archive
+Authorization: Bearer {{accessToken}}
+
+### CATEGORIES — DELETE /categories/{id} no longer exists → 405
 
 DELETE {{baseUrl}}/categories/7
-Authorization: Bearer {{accessToken}}
-
-### CATEGORIES — Delete category in use → 409
-
-DELETE {{baseUrl}}/categories/5
-Authorization: Bearer {{accessToken}}
-
-### CATEGORIES — Try to delete a global category → 403
-
-DELETE {{baseUrl}}/categories/1
 Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,9 +341,11 @@ Authorization: Bearer {{accessToken}}
 # All routes require a Bearer token.
 # Seeded globals: 1 Dinheiro, 2 Cartão de crédito, 3 Cartão de débito, 4 Pix,
 # 5 Transferência bancária, 6 Boleto.
+# Same rules as categories, without icon and color (sent ones are ignored).
+# The examples assume the first own payment method gets id 7 and the second id 8.
 # ─────────────────────────────────────────────────────────────────────────────
 
-### PAYMENT METHODS — List all (global + personal) → 200
+### PAYMENT METHODS — List all (global + personal, archived included) → 200
 
 GET {{baseUrl}}/payment-methods
 Authorization: Bearer {{accessToken}}
@@ -160,30 +357,40 @@ Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Nubank"
+  "name": "Vale-refeição"
 }
 
-### PAYMENT METHODS — Create with duplicate name (case-insensitive) → 409
+### PAYMENT METHODS — Create a second personal payment method → 201
 
 POST {{baseUrl}}/payment-methods
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "nubank"
+  "name": "Cartão da empresa"
 }
 
-### PAYMENT METHODS — Create with a global payment method's name → 409
+### PAYMENT METHODS — Create again with the same name, ignoring accents → 409 NAME_CONFLICT
 
 POST {{baseUrl}}/payment-methods
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Pix"
+  "name": "vale-refeicao"
 }
 
-### PAYMENT METHODS — Create with blank name → 422
+### PAYMENT METHODS — Create with a default payment method's name → 409 DEFAULT_NAME_CONFLICT
+
+POST {{baseUrl}}/payment-methods
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "pix"
+}
+
+### PAYMENT METHODS — Validation: blank name → 422
 
 POST {{baseUrl}}/payment-methods
 Content-Type: {{contentType}}
@@ -193,17 +400,27 @@ Authorization: Bearer {{accessToken}}
   "name": "   "
 }
 
-### PAYMENT METHODS — Rename personal payment method → 200
+### PAYMENT METHODS — Validation: name above 40 characters → 422
 
-PUT {{baseUrl}}/payment-methods/7
+POST {{baseUrl}}/payment-methods
 Content-Type: {{contentType}}
 Authorization: Bearer {{accessToken}}
 
 {
-  "name": "Nubank Visa"
+  "name": "A payment method name longer than forty characters"
 }
 
-### PAYMENT METHODS — Try to edit a global payment method → 403
+### PAYMENT METHODS — Rename personal payment method → 200
+
+PUT {{baseUrl}}/payment-methods/8
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Cartão corporativo"
+}
+
+### PAYMENT METHODS — Try to edit a default payment method → 403
 
 PUT {{baseUrl}}/payment-methods/1
 Content-Type: {{contentType}}
@@ -213,14 +430,49 @@ Authorization: Bearer {{accessToken}}
   "name": "Cash"
 }
 
-### PAYMENT METHODS — Delete unused personal payment method → 204
+### PAYMENT METHODS — Archive personal payment method → 204
 
-DELETE {{baseUrl}}/payment-methods/7
+PUT {{baseUrl}}/payment-methods/7/archive
 Authorization: Bearer {{accessToken}}
 
-### PAYMENT METHODS — Try to delete a global payment method → 403
+### PAYMENT METHODS — Archive again → 204 (idempotent)
 
-DELETE {{baseUrl}}/payment-methods/1
+PUT {{baseUrl}}/payment-methods/7/archive
+Authorization: Bearer {{accessToken}}
+
+### PAYMENT METHODS — Rename to the name of an archived one → 409 ARCHIVED_NAME_CONFLICT
+
+PUT {{baseUrl}}/payment-methods/8
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "Vale-refeição"
+}
+
+### PAYMENT METHODS — Create with the name of an archived one → 200 (reactivated)
+
+POST {{baseUrl}}/payment-methods
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "VALE-REFEICAO"
+}
+
+### PAYMENT METHODS — Reactivate → 204
+
+DELETE {{baseUrl}}/payment-methods/7/archive
+Authorization: Bearer {{accessToken}}
+
+### PAYMENT METHODS — Try to archive a default payment method → 403
+
+PUT {{baseUrl}}/payment-methods/1/archive
+Authorization: Bearer {{accessToken}}
+
+### PAYMENT METHODS — DELETE /payment-methods/{id} no longer exists → 405
+
+DELETE {{baseUrl}}/payment-methods/7
 Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -301,6 +553,22 @@ Authorization: Bearer {{accessToken}}
   "category_id":    999999,
   "payment_method_id": 4,
   "amount":         "50.00",
+  "status":         "PENDING"
+}
+
+### CREATE — Archived category → 404 CATEGORY_NOT_FOUND
+# Archive the category first.
+
+POST {{baseUrl}}/purchases
+Content-Type: {{contentType}}
+Authorization: Bearer {{accessToken}}
+
+{
+  "purchase_date":  "2024-07-01",
+  "description":    "Pet food",
+  "category_id":    7,
+  "payment_method_id": 4,
+  "amount":         "89.90",
   "status":         "PENDING"
 }
 

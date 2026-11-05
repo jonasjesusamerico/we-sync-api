@@ -19,6 +19,10 @@ type service interface {
 	Refresh(ctx context.Context, req *RefreshRequest) (*TokenResponse, error)
 	Logout(ctx context.Context, req *RefreshRequest) error
 	Me(ctx context.Context) (*UserResponse, error)
+	UpdateProfile(ctx context.Context, req *UpdateProfileRequest) (*UserResponse, error)
+	UpdatePreferences(ctx context.Context, req *UpdatePreferencesRequest) (*UserResponse, error)
+	ChangePassword(ctx context.Context, req *ChangePasswordRequest) (*TokenResponse, error)
+	DeleteAccount(ctx context.Context, req *DeleteAccountRequest) error
 }
 
 type Handler struct {
@@ -141,7 +145,8 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 
 // Me returns the authenticated user.
 // @Summary Get the authenticated user
-// @Description Returns the id, name and e-mail of the user identified by the access token.
+// @Description Returns the id, name, e-mail and theme of the user identified by the access token.
+// @Description theme is LIGHT, DARK or null when never chosen in the account.
 // @Tags users
 // @Produce json
 // @Success 200 {object} UserResponse
@@ -158,8 +163,127 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, response)
 }
 
+// UpdateProfile changes the authenticated user's name.
+// @Summary Update the profile
+// @Description Replaces the name (trimmed, 2 to 60 characters). The e-mail never changes: an email field in the body is ignored.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body UpdateProfileRequest true "Profile data"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} httputil.APIError "Invalid request body"
+// @Failure 401 {object} httputil.APIError "Missing or invalid authentication token"
+// @Failure 422 {object} httputil.APIError "Validation error"
+// @Failure 500 {object} httputil.APIError "Internal server error"
+// @Router /users/me/profile [put]
+func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	var req UpdateProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteBadRequest(w, "invalid request body")
+		return
+	}
+
+	response, err := h.svc.UpdateProfile(r.Context(), &req)
+	if err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, response)
+}
+
+// UpdatePreferences saves the authenticated user's theme.
+// @Summary Update the preferences
+// @Description Saves the theme in the account (LIGHT or DARK).
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body UpdatePreferencesRequest true "Preferences"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} httputil.APIError "Invalid request body"
+// @Failure 401 {object} httputil.APIError "Missing or invalid authentication token"
+// @Failure 422 {object} httputil.APIError "Validation error"
+// @Failure 500 {object} httputil.APIError "Internal server error"
+// @Router /users/me/preferences [put]
+func (h *Handler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
+	var req UpdatePreferencesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteBadRequest(w, "invalid request body")
+		return
+	}
+
+	response, err := h.svc.UpdatePreferences(r.Context(), &req)
+	if err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, response)
+}
+
+// ChangePassword replaces the authenticated user's password.
+// @Summary Change the password
+// @Description Checks current_password and stores new_password (8 to 72 bytes, never trimmed, different from the current one).
+// @Description Every other session ends: previous refresh tokens are revoked and previous access tokens get 401.
+// @Description Returns a new token pair for the caller.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body ChangePasswordRequest true "Current and new password"
+// @Success 200 {object} TokenResponse
+// @Failure 400 {object} httputil.APIError "Invalid request body"
+// @Failure 401 {object} httputil.APIError "Missing or invalid authentication token"
+// @Failure 403 {object} httputil.APIError "INVALID_PASSWORD: the current password does not match"
+// @Failure 422 {object} httputil.APIError "Validation error"
+// @Failure 500 {object} httputil.APIError "Internal server error"
+// @Router /users/me/password [put]
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteBadRequest(w, "invalid request body")
+		return
+	}
+
+	response, err := h.svc.ChangePassword(r.Context(), &req)
+	if err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, response)
+}
+
+// DeleteAccount deletes the authenticated user's account.
+// @Summary Delete the account
+// @Description Deletes the account and all its data (purchases, own categories and payment methods, sessions). It cannot be undone.
+// @Description The password confirms the operation and is never trimmed.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body DeleteAccountRequest true "Password confirmation"
+// @Success 204
+// @Failure 400 {object} httputil.APIError "Invalid or missing request body"
+// @Failure 401 {object} httputil.APIError "Missing or invalid authentication token"
+// @Failure 403 {object} httputil.APIError "INVALID_PASSWORD: the password does not match"
+// @Failure 422 {object} httputil.APIError "Validation error"
+// @Failure 500 {object} httputil.APIError "Internal server error"
+// @Router /users/me [delete]
+func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
+	var req DeleteAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// An empty body (io.EOF) is also a bad request: the password is required in the body.
+		httputil.WriteBadRequest(w, "invalid request body")
+		return
+	}
+
+	if err := h.svc.DeleteAccount(r.Context(), &req); err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrInvalidPassword):
+		httputil.WriteError(w, http.StatusForbidden, httputil.ErrCodeInvalidPassword, "invalid password")
 	case errors.Is(err, apperrors.ErrValidation):
 		httputil.WriteValidationError(w, err.Error())
 	case errors.Is(err, apperrors.ErrUnauthorized):

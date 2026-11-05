@@ -64,7 +64,7 @@ func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *Crea
 		SELECT
 			i.id, i.user_id, i.purchase_date, i.description,
 			i.amount, i.status, i.created_at, i.updated_at,
-			c.id, c.user_id, c.name,
+			c.id, c.user_id, c.name, c.icon, c.color,
 			pm.id, pm.user_id, pm.name
 		FROM inserted i
 		JOIN categories c ON c.id = i.category_id
@@ -100,6 +100,8 @@ func (r *PostgresRepository) Create(ctx context.Context, userID int64, req *Crea
 		&p.Category.ID,
 		&catUserID,
 		&p.Category.Name,
+		&p.Category.Icon,
+		&p.Category.Color,
 		&p.PaymentMethod.ID,
 		&pmUserID,
 		&p.PaymentMethod.Name,
@@ -133,7 +135,7 @@ func (r *PostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Pu
 		SELECT
 			pe.id, pe.user_id, pe.purchase_date, pe.description,
 			pe.amount, pe.status, pe.created_at, pe.updated_at,
-			c.id, c.user_id, c.name,
+			c.id, c.user_id, c.name, c.icon, c.color,
 			pm.id, pm.user_id, pm.name
 		FROM   purchase_entries pe
 		JOIN   categories c ON c.id = pe.category_id
@@ -164,6 +166,8 @@ func (r *PostgresRepository) GetByID(ctx context.Context, userID, id int64) (*Pu
 		&p.Category.ID,
 		&catUserID,
 		&p.Category.Name,
+		&p.Category.Icon,
+		&p.Category.Color,
 		&p.PaymentMethod.ID,
 		&pmUserID,
 		&p.PaymentMethod.Name,
@@ -230,7 +234,7 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 		SELECT
 			pe.id, pe.user_id, pe.purchase_date, pe.description,
 			pe.amount, pe.status, pe.created_at, pe.updated_at,
-			c.id, c.user_id, c.name,
+			c.id, c.user_id, c.name, c.icon, c.color,
 			pm.id, pm.user_id, pm.name
 		FROM   purchase_entries pe
 		JOIN   categories c ON c.id = pe.category_id
@@ -266,6 +270,8 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 			&p.Category.ID,
 			&catUserID,
 			&p.Category.Name,
+			&p.Category.Icon,
+			&p.Category.Color,
 			&p.PaymentMethod.ID,
 			&pmUserID,
 			&p.PaymentMethod.Name,
@@ -430,7 +436,7 @@ func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *
 		SELECT
 			u.id, u.user_id, u.purchase_date, u.description,
 			u.amount, u.status, u.created_at, u.updated_at,
-			c.id, c.user_id, c.name,
+			c.id, c.user_id, c.name, c.icon, c.color,
 			pm.id, pm.user_id, pm.name
 		FROM updated u
 		JOIN categories c ON c.id = u.category_id
@@ -469,6 +475,8 @@ func (r *PostgresRepository) Update(ctx context.Context, userID, id int64, req *
 		&p.Category.ID,
 		&catUserID,
 		&p.Category.Name,
+		&p.Category.Icon,
+		&p.Category.Color,
 		&p.PaymentMethod.ID,
 		&pmUserID,
 		&p.PaymentMethod.Name,

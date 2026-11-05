@@ -995,3 +995,177 @@ func TestService_Summary_UserIDFromContext(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// archived categories and payment methods (feature 006, ADR-11)
+// ---------------------------------------------------------------------------
+
+var archivedAt = time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+
+// archivedCategoryLookup resolves id to an own archived category of userID and any other id to an
+// active global one.
+func archivedCategoryLookup(id, userID int64) *mockCategoryLookup {
+	return &mockCategoryLookup{
+		GetByIDFn: func(_ context.Context, got int64) (*category.Category, error) {
+			if got == id {
+				return &category.Category{ID: id, UserID: &userID, Name: "Pets", ArchivedAt: &archivedAt}, nil
+			}
+			return &category.Category{ID: got, Name: "Lazer", IsGlobal: true}, nil
+		},
+	}
+}
+
+// archivedPaymentMethodLookup resolves id to an own archived payment method of userID and any other id
+// to an active global one.
+func archivedPaymentMethodLookup(id, userID int64) *mockPaymentMethodLookup {
+	return &mockPaymentMethodLookup{
+		GetByIDFn: func(_ context.Context, got int64) (*paymentmethod.PaymentMethod, error) {
+			if got == id {
+				return &paymentmethod.PaymentMethod{ID: id, UserID: &userID, Name: "Cartão antigo", ArchivedAt: &archivedAt}, nil
+			}
+			return &paymentmethod.PaymentMethod{ID: got, Name: "Pix", IsGlobal: true}, nil
+		},
+	}
+}
+
+// currentPurchase is the stored purchase the update reads: categoryID and paymentMethodID are its
+// current references.
+func currentPurchase(categoryID, paymentMethodID int64) *Purchase {
+	return &Purchase{
+		ID:            9,
+		Category:      category.CategorySummary{ID: categoryID},
+		PaymentMethod: paymentmethod.PaymentMethodSummary{ID: paymentMethodID},
+	}
+}
+
+// updateRepo returns a repository whose GetByID returns current (counting calls and checking the user)
+// and whose Update records that it was called.
+func updateRepo(t *testing.T, current *Purchase, getErr error, reads, updates *int) *mockPurchaseRepository {
+	return &mockPurchaseRepository{
+		GetByIDFn: func(_ context.Context, userID, id int64) (*Purchase, error) {
+			*reads++
+			if userID != 42 || id != 9 {
+				t.Errorf("GetByID(%d, %d), want (42, 9)", userID, id)
+			}
+			return current, getErr
+		},
+		UpdateFn: func(_ context.Context, _, _ int64, req *UpdatePurchaseRequest) (*Purchase, error) {
+			*updates++
+			return currentPurchase(req.CategoryID, req.PaymentMethodID), nil
+		},
+	}
+}
+
+func updateWith(categoryID, paymentMethodID int64) *UpdatePurchaseRequest {
+	req := validUpdateRequest()
+	req.CategoryID, req.PaymentMethodID = categoryID, paymentMethodID
+	return req
+}
+
+func TestService_Create_ArchivedCategory(t *testing.T) {
+	repo := &mockPurchaseRepository{
+		CreateFn: func(context.Context, int64, *CreatePurchaseRequest) (*Purchase, error) {
+			t.Fatal("repo.Create must not be called")
+			return nil, nil
+		},
+	}
+	svc := newSvc(repo, archivedCategoryLookup(101, 42))
+	req := validCreateRequest()
+	req.CategoryID = 101
+
+	_, err := svc.Create(identity.WithUserID(context.Background(), 42), req)
+	if !errors.Is(err, category.ErrCategoryNotFound) {
+		t.Fatalf("err = %v, want ErrCategoryNotFound", err)
+	}
+}
+
+func TestService_Create_ArchivedPaymentMethod(t *testing.T) {
+	repo := &mockPurchaseRepository{
+		CreateFn: func(context.Context, int64, *CreatePurchaseRequest) (*Purchase, error) {
+			t.Fatal("repo.Create must not be called")
+			return nil, nil
+		},
+	}
+	svc := NewService(repo, globalCatRepo(), archivedPaymentMethodLookup(203, 42))
+	req := validCreateRequest()
+	req.PaymentMethodID = 203
+
+	_, err := svc.Create(identity.WithUserID(context.Background(), 42), req)
+	if !errors.Is(err, paymentmethod.ErrPaymentMethodNotFound) {
+		t.Fatalf("err = %v, want ErrPaymentMethodNotFound", err)
+	}
+}
+
+func TestService_Update_ArchivedReferences(t *testing.T) {
+	ctx := identity.WithUserID(context.Background(), 42)
+	readErr := errors.New("db failure")
+	tests := []struct {
+		name        string
+		cats        *mockCategoryLookup
+		pms         *mockPaymentMethodLookup
+		current     *Purchase
+		getErr      error
+		req         *UpdatePurchaseRequest
+		wantErr     error
+		wantReads   int
+		wantUpdates int
+	}{
+		{
+			name: "keeps archived category", cats: archivedCategoryLookup(101, 42), pms: globalPaymentMethodLookup(),
+			current: currentPurchase(101, 1), req: updateWith(101, 1), wantReads: 1, wantUpdates: 1,
+		},
+		{
+			name: "switch to archived category", cats: archivedCategoryLookup(101, 42), pms: globalPaymentMethodLookup(),
+			current: currentPurchase(6, 1), req: updateWith(101, 1), wantErr: category.ErrCategoryNotFound, wantReads: 1,
+		},
+		{
+			name: "keeps archived payment method", cats: globalCatRepo(), pms: archivedPaymentMethodLookup(203, 42),
+			current: currentPurchase(1, 203), req: updateWith(1, 203), wantReads: 1, wantUpdates: 1,
+		},
+		{
+			name: "switch to archived payment method", cats: globalCatRepo(), pms: archivedPaymentMethodLookup(203, 42),
+			current: currentPurchase(1, 4), req: updateWith(1, 203), wantErr: paymentmethod.ErrPaymentMethodNotFound, wantReads: 1,
+		},
+		{
+			name: "both archived read once", cats: archivedCategoryLookup(101, 42), pms: archivedPaymentMethodLookup(203, 42),
+			current: currentPurchase(101, 203), req: updateWith(101, 203), wantReads: 1, wantUpdates: 1,
+		},
+		{
+			name: "archived category, purchase missing", cats: archivedCategoryLookup(101, 42), pms: globalPaymentMethodLookup(),
+			current: nil, req: updateWith(101, 1), wantErr: category.ErrCategoryNotFound, wantReads: 1,
+		},
+		{
+			name: "archived payment method, purchase missing", cats: globalCatRepo(), pms: archivedPaymentMethodLookup(203, 42),
+			current: nil, req: updateWith(1, 203), wantErr: paymentmethod.ErrPaymentMethodNotFound, wantReads: 1,
+		},
+		{
+			name: "active references do not read the purchase", cats: globalCatRepo(), pms: globalPaymentMethodLookup(),
+			current: currentPurchase(1, 1), req: updateWith(1, 1), wantReads: 0, wantUpdates: 1,
+		},
+		{
+			name: "read error", cats: archivedCategoryLookup(101, 42), pms: globalPaymentMethodLookup(),
+			getErr: readErr, req: updateWith(101, 1), wantErr: readErr, wantReads: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var reads, updates int
+			svc := NewService(updateRepo(t, tc.current, tc.getErr, &reads, &updates), tc.cats, tc.pms)
+
+			_, err := svc.Update(ctx, 9, tc.req)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if errors.Is(tc.wantErr, readErr) && errors.Is(err, category.ErrCategoryNotFound) {
+				t.Fatalf("a read error must not become ErrCategoryNotFound: %v", err)
+			}
+			if reads != tc.wantReads || updates != tc.wantUpdates {
+				t.Fatalf("GetByID calls = %d, Update calls = %d; want %d and %d", reads, updates, tc.wantReads, tc.wantUpdates)
+			}
+		})
+	}
+}

@@ -115,6 +115,7 @@ func main() {
 			properties.EnableSwagger,
 			properties.CORSAllowedOrigins,
 			[]byte(properties.JWT.Secret),
+			authRepo,
 		),
 	}
 

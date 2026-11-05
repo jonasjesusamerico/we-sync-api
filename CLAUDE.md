@@ -38,7 +38,8 @@ internal/identity        userID autenticado no context (WithUserID / UserIDFromC
 internal/logger, telemetry
 ```
 
-Subagente de implementação em `.claude/agents/api-implementer.md`: executa tasks de spec aprovada.
+Subagente `.claude/agents/api-implementer.md`: caminho curto para mudança pequena sem feature (bug fix,
+refatoração interna, item de débito técnico sem impacto no contrato).
 Regras detalhadas em `.claude/rules/` (carregadas pelos arquivos em uso): `architecture`, `solid-and-code-quality`,
 `api-standards`, `persistence`, `security`, `testing`, `reliability-and-performance`.
 
@@ -74,9 +75,11 @@ Tarefa grande (novo domínio, schema com dados, auth, nova dependência, contrat
 confirmação antes de implementar. Tarefa pequena: execute direto.
 
 **Requisitos e tasks:** features não triviais são especificadas no repositório irmão `../we-sync-requirements`
-(agente `business-analyst`, `docs/requirements/NNN-*/`; tasks em `05-plano-implementacao.md`). Só implemente
-atividades na fase `Aprovado`/`Planejado`; ao implementar, atualize o status das tasks e `evidencias.md` lá.
-As antigas specs locais (`docs/specs/`) estão em `../we-sync-requirements/docs/legacy/we-sync-api/`, somente leitura.
+(fluxo em `.claude/fluxo.md` de lá; documentos em `docs/features/NNN-nome/`). As tarefas `TB-xx` de um
+`3-sdd-backend.md` com `Status: Aprovado` são implementadas pelo agente `dev-backend`
+(`claude --agent dev-backend` no `../we-sync-requirements`), que marca o status delas no próprio SDD. Mudança que
+altera contrato público, schema, regra de negócio, auth ou dependência precisa de feature lá; mudança pequena
+sem isso segue o `api-implementer`. Pendência fora do escopo vai para `docs/debito-tecnico.md` de lá.
 
 ## Regras inegociáveis
 

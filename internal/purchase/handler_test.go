@@ -835,3 +835,25 @@ func TestHandler_Summary_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_Get_CategoryIconColor(t *testing.T) {
+	h := NewHandler(&mockPurchaseService{
+		GetByIDFn: func(context.Context, int64) (*Purchase, error) {
+			p := samplePurchase()
+			p.Category = category.CategorySummary{ID: 101, Name: "Pets", IsGlobal: false,
+				Icon: category.IconHeart, Color: category.ColorLeisure}
+			return p, nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	h.GetByID(rec, withChiID(httptest.NewRequest(http.MethodGet, "/purchases/1", nil), "1"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	want := `"category":{"id":101,"name":"Pets","is_global":false,"icon":"HEART","color":"LEISURE"}`
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("body %s does not contain %s", rec.Body.String(), want)
+	}
+}

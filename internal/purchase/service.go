@@ -95,11 +95,20 @@ func (s *Service) Create(ctx context.Context, req *CreatePurchaseRequest) (*Purc
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	if err := s.validateCategoryAccess(ctx, req.CategoryID, userID); err != nil {
+	// A new purchase never takes an archived category or payment method (ADR-11 of feature 006).
+	catArchived, err := s.validateCategoryAccess(ctx, req.CategoryID, userID)
+	if err == nil && catArchived {
+		err = category.ErrCategoryNotFound
+	}
+	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	if err := s.validatePaymentMethodAccess(ctx, req.PaymentMethodID, userID); err != nil {
+	pmArchived, err := s.validatePaymentMethodAccess(ctx, req.PaymentMethodID, userID)
+	if err == nil && pmArchived {
+		err = paymentmethod.ErrPaymentMethodNotFound
+	}
+	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
@@ -367,11 +376,7 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdatePurchaseReque
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	if err := s.validateCategoryAccess(ctx, req.CategoryID, userID); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, err
-	}
-	if err := s.validatePaymentMethodAccess(ctx, req.PaymentMethodID, userID); err != nil {
+	if err := s.checkUpdateReferences(ctx, userID, id, req); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
@@ -478,30 +483,80 @@ func validateRequest(req *PurchaseRequest) error {
 	return nil
 }
 
-// validateCategoryAccess ensures the category exists and is accessible by userID.
-// Returns category.ErrCategoryNotFound when the category does not exist or belongs to
-// another user, so existence of other users' categories is never leaked.
-func (s *Service) validateCategoryAccess(ctx context.Context, categoryID, userID int64) error {
-	cat, err := s.categories.GetByID(ctx, categoryID)
-	if err != nil {
-		return fmt.Errorf("purchaseService.validateCategoryAccess: %w", err)
+// checkUpdateReferences checks the category and payment method of an update, in the contract order
+// (CATEGORY_NOT_FOUND before PAYMENT_METHOD_NOT_FOUND). An archived reference is accepted only when it
+// is the one the purchase already has (ADR-11 of feature 006). The current purchase is read lazily, at
+// most once, and only when a reference is archived; between that read and the UPDATE the purchase may
+// change in another tab, and the last write wins.
+func (s *Service) checkUpdateReferences(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) error {
+	var current *Purchase
+	loaded := false
+	loadCurrent := func() error {
+		if loaded {
+			return nil
+		}
+		p, err := s.repo.GetByID(ctx, userID, id)
+		if err != nil {
+			return fmt.Errorf("purchaseService.Update: %w", err)
+		}
+		current, loaded = p, true
+		return nil
 	}
-	if cat == nil || !cat.AccessibleBy(userID) {
-		return category.ErrCategoryNotFound
+
+	catArchived, err := s.validateCategoryAccess(ctx, req.CategoryID, userID)
+	if err != nil {
+		return err
+	}
+	if catArchived {
+		if err := loadCurrent(); err != nil {
+			return err
+		}
+		if current == nil || current.Category.ID != req.CategoryID {
+			return category.ErrCategoryNotFound
+		}
+	}
+
+	pmArchived, err := s.validatePaymentMethodAccess(ctx, req.PaymentMethodID, userID)
+	if err != nil {
+		return err
+	}
+	if pmArchived {
+		if err := loadCurrent(); err != nil {
+			return err
+		}
+		if current == nil || current.PaymentMethod.ID != req.PaymentMethodID {
+			return paymentmethod.ErrPaymentMethodNotFound
+		}
 	}
 	return nil
 }
 
-// validatePaymentMethodAccess ensures the payment method exists and is accessible by userID.
-// Returns paymentmethod.ErrPaymentMethodNotFound when it does not exist or belongs to
-// another user, so existence of other users' payment methods is never leaked.
-func (s *Service) validatePaymentMethodAccess(ctx context.Context, paymentMethodID, userID int64) error {
+// validateCategoryAccess ensures the category exists and is accessible by userID, and reports whether it
+// is archived. Returns category.ErrCategoryNotFound when the category does not exist or belongs to
+// another user, so existence of other users' categories is never leaked. "archived" is accepted only by
+// Update, when it is the category the purchase already has (ADR-11 of feature 006).
+func (s *Service) validateCategoryAccess(ctx context.Context, categoryID, userID int64) (archived bool, err error) {
+	cat, err := s.categories.GetByID(ctx, categoryID)
+	if err != nil {
+		return false, fmt.Errorf("purchaseService.validateCategoryAccess: %w", err)
+	}
+	if cat == nil || !cat.AccessibleBy(userID) {
+		return false, category.ErrCategoryNotFound
+	}
+	return cat.IsArchived(), nil
+}
+
+// validatePaymentMethodAccess ensures the payment method exists and is accessible by userID, and reports
+// whether it is archived. Returns paymentmethod.ErrPaymentMethodNotFound when it does not exist or belongs
+// to another user, so existence of other users' payment methods is never leaked. "archived" is accepted
+// only by Update, when it is the payment method the purchase already has (ADR-11 of feature 006).
+func (s *Service) validatePaymentMethodAccess(ctx context.Context, paymentMethodID, userID int64) (archived bool, err error) {
 	pm, err := s.paymentMethods.GetByID(ctx, paymentMethodID)
 	if err != nil {
-		return fmt.Errorf("purchaseService.validatePaymentMethodAccess: %w", err)
+		return false, fmt.Errorf("purchaseService.validatePaymentMethodAccess: %w", err)
 	}
 	if pm == nil || !pm.AccessibleBy(userID) {
-		return paymentmethod.ErrPaymentMethodNotFound
+		return false, paymentmethod.ErrPaymentMethodNotFound
 	}
-	return nil
+	return pm.IsArchived(), nil
 }

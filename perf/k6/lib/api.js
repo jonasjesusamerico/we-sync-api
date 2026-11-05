@@ -77,6 +77,8 @@ export function deletePurchase(token, id) {
 
 // --- categories / payment methods ------------------------------------------
 // resource: 'categories' | 'payment-methods'
+// Categories require icon and color; payment methods ignore both fields, so one body serves the two.
+// Own categories and payment methods are archived, not deleted (feature 006).
 
 export function listOwned(token, resource) {
   return jsonOrNull(request('GET', `/${resource}`, { token, name: `GET /${resource}` }), 200);
@@ -84,14 +86,16 @@ export function listOwned(token, resource) {
 
 export function createOwned(token, resource, name) {
   return jsonOrNull(request('POST', `/${resource}`, {
-    token, body: { name }, name: `POST /${resource}`, expect: 201,
+    token, body: { name, icon: 'TAG', color: 'FOOD' }, name: `POST /${resource}`, expect: 201,
   }), 201);
 }
 
 export function updateOwned(token, resource, id, name) {
-  return request('PUT', `/${resource}/${id}`, { token, body: { name }, name: `PUT /${resource}/{id}` });
+  return request('PUT', `/${resource}/${id}`, {
+    token, body: { name, icon: 'TAG', color: 'FOOD' }, name: `PUT /${resource}/{id}`,
+  });
 }
 
-export function deleteOwned(token, resource, id) {
-  return request('DELETE', `/${resource}/${id}`, { token, name: `DELETE /${resource}/{id}`, expect: 204 });
+export function archiveOwned(token, resource, id) {
+  return request('PUT', `/${resource}/${id}/archive`, { token, name: `PUT /${resource}/{id}/archive`, expect: 204 });
 }
