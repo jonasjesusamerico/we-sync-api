@@ -54,6 +54,26 @@ func TestListWhere(t *testing.T) {
 				" AND pe.status = $4 AND pe.category_id = $5 AND pe.payment_method_id = $6",
 			wantArgs: []any{int64(7), date(2026, time.January, 1), date(2026, time.February, 1), "PAID", int64(3), int64(4)},
 		},
+		{
+			name:      "search alone",
+			filter:    ListFilter{UserID: 7, Search: "padaria"},
+			wantWhere: "WHERE pe.user_id = $1 AND strpos(lower(unaccent(pe.description)), lower(unaccent($2))) > 0",
+			wantArgs:  []any{int64(7), "padaria"},
+		},
+		{
+			name: "search goes last and is passed raw",
+			filter: ListFilter{
+				UserID: 7, Month: 1, Year: 2026, Status: StatusPaid, CategoryID: 3, PaymentMethodID: 4,
+				Search: `50%_off\`,
+			},
+			wantWhere: "WHERE pe.user_id = $1 AND pe.purchase_date >= $2 AND pe.purchase_date < $3" +
+				" AND pe.status = $4 AND pe.category_id = $5 AND pe.payment_method_id = $6" +
+				" AND strpos(lower(unaccent(pe.description)), lower(unaccent($7))) > 0",
+			wantArgs: []any{
+				int64(7), date(2026, time.January, 1), date(2026, time.February, 1), "PAID", int64(3), int64(4),
+				`50%_off\`,
+			},
+		},
 	}
 
 	for _, tt := range tests {

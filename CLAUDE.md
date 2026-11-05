@@ -38,6 +38,8 @@ internal/identity        userID autenticado no context (WithUserID / UserIDFromC
 internal/logger, telemetry
 ```
 
+Subagente `.claude/agents/api-implementer.md`: caminho curto para mudança pequena sem feature (bug fix,
+refatoração interna, item de débito técnico sem impacto no contrato).
 Regras detalhadas em `.claude/rules/` (carregadas pelos arquivos em uso): `architecture`, `solid-and-code-quality`,
 `api-standards`, `persistence`, `security`, `testing`, `reliability-and-performance`.
 
@@ -50,7 +52,7 @@ go build ./...
 go test ./...                  # unitários, não exigem banco
 go test -race ./internal/...   # ao mexer em concorrência/middlewares
 go test ./internal/purchase -run TestService_Create -v
-docker compose up --build      # postgres, migrate, nginx (:8080), 2 apps, observabilidade
+docker compose up --build      # postgres, migrate, nginx (:8080), 2 apps, front (:3000, exige ../we-sync-front clonado ao lado), observabilidade
 docker run --rm -i --network host -v $PWD/perf/k6:/scripts:ro grafana/k6:1.0.0 run /scripts/smoke.js   # carga: ver perf/k6/README.md
 go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/api/main.go -o docs/swagger   # após mudar anotações
 ```
@@ -72,9 +74,12 @@ Não existe Makefile nem CI — não crie sem pedido.
 Tarefa grande (novo domínio, schema com dados, auth, nova dependência, contrato público): plano curto e
 confirmação antes de implementar. Tarefa pequena: execute direto.
 
-**Spec-Driven Development:** features não triviais seguem `docs/specs/README.md`
-(spec → plan → tasks → implement, templates em `docs/specs/_templates/`). Não avance de fase sem o gate
-da anterior; ao implementar, marque as tasks e mantenha spec e código coerentes.
+**Requisitos e tasks:** features não triviais são especificadas no repositório irmão `../we-sync-requirements`
+(fluxo em `.claude/fluxo.md` de lá; documentos em `docs/features/NNN-nome/`). As tarefas `TB-xx` de um
+`3-sdd-backend.md` com `Status: Aprovado` são implementadas pelo agente `dev-backend`
+(`claude --agent dev-backend` no `../we-sync-requirements`), que marca o status delas no próprio SDD. Mudança que
+altera contrato público, schema, regra de negócio, auth ou dependência precisa de feature lá; mudança pequena
+sem isso segue o `api-implementer`. Pendência fora do escopo vai para `docs/debito-tecnico.md` de lá.
 
 ## Regras inegociáveis
 

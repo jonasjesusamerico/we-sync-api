@@ -16,10 +16,11 @@ import (
 // service is the behaviour of *Service the handler depends on. It is declared
 // here, at the consumer, so handler tests can substitute a fake.
 type service interface {
-	Create(ctx context.Context, req *CreateCategoryRequest) (*Category, error)
+	Create(ctx context.Context, req *CreateCategoryRequest) (*Category, bool, error)
 	List(ctx context.Context) ([]Category, error)
 	Update(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error)
-	Delete(ctx context.Context, id int64) error
+	Archive(ctx context.Context, id int64) error
+	Unarchive(ctx context.Context, id int64) error
 }
 
 // Handler handles HTTP requests for the category domain.
@@ -35,15 +36,18 @@ func NewHandler(svc service) *Handler {
 // Create handles POST /categories
 //
 // @Summary     Create a personal category
-// @Description Creates a new personal category for the authenticated user.
+// @Description Creates a personal category for the authenticated user, or reactivates the user's archived
+// @Description category with the same name (case- and accent-insensitive): the stored name is kept and the
+// @Description icon and color sent are applied.
 // @Tags        categories
 // @Accept      json
 // @Produce     json
 // @Param       body body     CreateCategoryRequest true "Category data"
 // @Success     201  {object} Category
+// @Success     200  {object} Category          "Reactivated"
 // @Failure     400  {object} httputil.APIError "Invalid request body"
 // @Failure     401  {object} httputil.APIError "Unauthorized"
-// @Failure     409  {object} httputil.APIError "Name already exists"
+// @Failure     409  {object} httputil.APIError "DEFAULT_NAME_CONFLICT or NAME_CONFLICT"
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /categories [post]
@@ -54,19 +58,24 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c, err := h.svc.Create(r.Context(), &req)
+	c, created, err := h.svc.Create(r.Context(), &req)
 	if err != nil {
 		h.handleError(w, r, err)
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusCreated, c)
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	httputil.WriteJSON(w, status, c)
 }
 
 // List handles GET /categories
 //
 // @Summary     List categories
-// @Description Returns all categories visible to the authenticated user (global + personal).
+// @Description Returns all categories visible to the authenticated user (global + personal), archived ones
+// @Description included; archived_at tells them apart.
 // @Tags        categories
 // @Produce     json
 // @Success     200 {array}  Category
@@ -86,7 +95,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // Update handles PUT /categories/{id}
 //
 // @Summary     Update a personal category
-// @Description Renames a personal category owned by the authenticated user.
+// @Description Replaces the name, icon and color of a personal category (active or archived) owned by the
+// @Description authenticated user.
 // @Tags        categories
 // @Accept      json
 // @Produce     json
@@ -95,9 +105,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Success     200  {object} Category
 // @Failure     400  {object} httputil.APIError "Invalid request body or ID"
 // @Failure     401  {object} httputil.APIError "Unauthorized"
-// @Failure     403  {object} httputil.APIError "Cannot modify a global category"
+// @Failure     403  {object} httputil.APIError "Cannot change a default category"
 // @Failure     404  {object} httputil.APIError "Not found"
-// @Failure     409  {object} httputil.APIError "Name already exists"
+// @Failure     409  {object} httputil.APIError "DEFAULT_NAME_CONFLICT, NAME_CONFLICT or ARCHIVED_NAME_CONFLICT"
 // @Failure     422  {object} httputil.APIError "Validation error"
 // @Failure     500  {object} httputil.APIError "Internal server error"
 // @Router      /categories/{id} [put]
@@ -122,31 +132,52 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, c)
 }
 
-// Delete handles DELETE /categories/{id}
+// Archive handles PUT /categories/{id}/archive
 //
-// @Summary     Delete a personal category
-// @Description Removes a personal category owned by the authenticated user.
-//
-//	Fails with 409 if the category is referenced by purchase entries.
-//
+// @Summary     Archive a personal category
+// @Description Archives a personal category. Its purchases do not change. Archiving an archived category
+// @Description is a no-op (idempotent).
 // @Tags        categories
 // @Produce     json
 // @Param       id  path int true "Category ID"
 // @Success     204 "No Content"
 // @Failure     400 {object} httputil.APIError "Invalid ID"
 // @Failure     401 {object} httputil.APIError "Unauthorized"
-// @Failure     403 {object} httputil.APIError "Cannot delete a global category"
+// @Failure     403 {object} httputil.APIError "Cannot change a default category"
 // @Failure     404 {object} httputil.APIError "Not found"
-// @Failure     409 {object} httputil.APIError "Category in use by purchase entries"
 // @Failure     500 {object} httputil.APIError "Internal server error"
-// @Router      /categories/{id} [delete]
-func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+// @Router      /categories/{id}/archive [put]
+func (h *Handler) Archive(w http.ResponseWriter, r *http.Request) {
+	h.setArchived(w, r, h.svc.Archive)
+}
+
+// Unarchive handles DELETE /categories/{id}/archive
+//
+// @Summary     Reactivate a personal category
+// @Description Reactivates an archived personal category. Reactivating an active category is a no-op
+// @Description (idempotent).
+// @Tags        categories
+// @Produce     json
+// @Param       id  path int true "Category ID"
+// @Success     204 "No Content"
+// @Failure     400 {object} httputil.APIError "Invalid ID"
+// @Failure     401 {object} httputil.APIError "Unauthorized"
+// @Failure     403 {object} httputil.APIError "Cannot change a default category"
+// @Failure     404 {object} httputil.APIError "Not found"
+// @Failure     500 {object} httputil.APIError "Internal server error"
+// @Router      /categories/{id}/archive [delete]
+func (h *Handler) Unarchive(w http.ResponseWriter, r *http.Request) {
+	h.setArchived(w, r, h.svc.Unarchive)
+}
+
+// setArchived is the shared flow of Archive and Unarchive: parse the id, call op, answer 204.
+func (h *Handler) setArchived(w http.ResponseWriter, r *http.Request, op func(context.Context, int64) error) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return
 	}
 
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	if err := op(r.Context(), id); err != nil {
 		h.handleError(w, r, err)
 		return
 	}
@@ -160,11 +191,18 @@ func (h *Handler) handleError(w http.ResponseWriter, r *http.Request, err error)
 	case errors.Is(err, apperrors.ErrUnauthorized):
 		httputil.WriteUnauthorized(w, "authentication required")
 	case errors.Is(err, apperrors.ErrForbidden):
-		httputil.WriteForbidden(w, "global categories cannot be modified or deleted")
+		httputil.WriteForbidden(w, "default categories cannot be changed")
 	case errors.Is(err, apperrors.ErrNotFound):
 		httputil.WriteNotFound(w, "category not found")
+	case errors.Is(err, ErrDefaultNameConflict):
+		httputil.WriteError(w, http.StatusConflict, httputil.ErrCodeDefaultNameConflict,
+			"name already used by a default category")
+	case errors.Is(err, ErrArchivedNameConflict):
+		httputil.WriteError(w, http.StatusConflict, httputil.ErrCodeArchivedNameConflict,
+			"name already used by an archived category")
 	case errors.Is(err, apperrors.ErrConflict):
-		httputil.WriteConflict(w, "category name already exists or is in use by purchase entries")
+		httputil.WriteError(w, http.StatusConflict, httputil.ErrCodeNameConflict,
+			"name already used by another category")
 	case errors.Is(err, apperrors.ErrValidation):
 		httputil.WriteValidationError(w, err.Error())
 	default:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,20 @@ type mockAuthService struct {
 	loginFn    func(context.Context, *LoginRequest) (*TokenResponse, error)
 	refreshFn  func(context.Context, *RefreshRequest) (*TokenResponse, error)
 	logoutFn   func(context.Context, *RefreshRequest) error
+	meFn       func(context.Context) (*UserResponse, error)
+
+	updateProfileFn     func(context.Context, *UpdateProfileRequest) (*UserResponse, error)
+	updatePreferencesFn func(context.Context, *UpdatePreferencesRequest) (*UserResponse, error)
+	changePasswordFn    func(context.Context, *ChangePasswordRequest) (*TokenResponse, error)
+	deleteAccountFn     func(context.Context, *DeleteAccountRequest) error
+}
+
+func (m *mockAuthService) DeleteAccount(ctx context.Context, req *DeleteAccountRequest) error {
+	return m.deleteAccountFn(ctx, req)
+}
+
+func (m *mockAuthService) ChangePassword(ctx context.Context, req *ChangePasswordRequest) (*TokenResponse, error) {
+	return m.changePasswordFn(ctx, req)
 }
 
 func (m *mockAuthService) Register(ctx context.Context, req *RegisterRequest) (*RegisterResponse, error) {
@@ -36,6 +51,18 @@ func (m *mockAuthService) Logout(ctx context.Context, req *RefreshRequest) error
 	return nil
 }
 
+func (m *mockAuthService) Me(ctx context.Context) (*UserResponse, error) {
+	return m.meFn(ctx)
+}
+
+func (m *mockAuthService) UpdateProfile(ctx context.Context, req *UpdateProfileRequest) (*UserResponse, error) {
+	return m.updateProfileFn(ctx, req)
+}
+
+func (m *mockAuthService) UpdatePreferences(ctx context.Context, req *UpdatePreferencesRequest) (*UserResponse, error) {
+	return m.updatePreferencesFn(ctx, req)
+}
+
 func decodeAPIError(t *testing.T, recorder *httptest.ResponseRecorder) httputil.APIError {
 	t.Helper()
 	var response httputil.APIError
@@ -51,7 +78,7 @@ func TestAuthHandler_RegisterSuccess(t *testing.T) {
 			return &RegisterResponse{ID: 1, Email: "user@example.com"}, nil
 		},
 	})
-	request := httptest.NewRequest(http.MethodPost, "/auth/register", strings.NewReader(`{"email":"user@example.com","password":"password123"}`))
+	request := httptest.NewRequest(http.MethodPost, "/auth/register", strings.NewReader(`{"name":"Ana Souza","email":"user@example.com","password":"password123"}`))
 	recorder := httptest.NewRecorder()
 	handler.Register(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -114,9 +141,9 @@ func TestAuthHandler_Register_Errors(t *testing.T) {
 		code   string
 	}{
 		"malformed body":  {body: `{`, status: http.StatusBadRequest, code: httputil.ErrCodeBadRequest},
-		"validation":      {body: `{"email":"x"}`, err: apperrors.NewValidationError("email is invalid"), status: http.StatusUnprocessableEntity, code: httputil.ErrCodeValidation},
-		"duplicate email": {body: `{"email":"user@example.com","password":"password123"}`, err: apperrors.ErrConflict, status: http.StatusConflict, code: httputil.ErrCodeConflict},
-		"internal error":  {body: `{"email":"user@example.com","password":"password123"}`, err: errors.New("pq: connection refused"), status: http.StatusInternalServerError, code: httputil.ErrCodeInternalServerError},
+		"validation":      {body: `{"name":"Ana Souza","email":"x"}`, err: apperrors.NewValidationError("email is invalid"), status: http.StatusUnprocessableEntity, code: httputil.ErrCodeValidation},
+		"duplicate email": {body: `{"name":"Ana Souza","email":"user@example.com","password":"password123"}`, err: apperrors.ErrConflict, status: http.StatusConflict, code: httputil.ErrCodeConflict},
+		"internal error":  {body: `{"name":"Ana Souza","email":"user@example.com","password":"password123"}`, err: errors.New("pq: connection refused"), status: http.StatusInternalServerError, code: httputil.ErrCodeInternalServerError},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -133,18 +160,45 @@ func TestAuthHandler_Register_Errors(t *testing.T) {
 
 func TestAuthHandler_Register_SuccessBody(t *testing.T) {
 	handler := NewHandler(&mockAuthService{
-		registerFn: func(context.Context, *RegisterRequest) (*RegisterResponse, error) {
-			return &RegisterResponse{ID: 42, Email: "user@example.com"}, nil
+		registerFn: func(_ context.Context, req *RegisterRequest) (*RegisterResponse, error) {
+			if req.Name != "Ana Souza" {
+				t.Fatalf("request name = %q, want %q", req.Name, "Ana Souza")
+			}
+			return &RegisterResponse{ID: 42, Name: "Ana Souza", Email: "user@example.com"}, nil
 		},
 	})
-	recorder := serve(handler.Register, `{"email":"user@example.com","password":"password123"}`)
+	recorder := serve(handler.Register, `{"name":"Ana Souza","email":"user@example.com","password":"password123"}`)
 	var response RegisterResponse
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if recorder.Code != http.StatusCreated || response.ID != 42 || response.Email != "user@example.com" {
+	if recorder.Code != http.StatusCreated || response.ID != 42 || response.Name != "Ana Souza" || response.Email != "user@example.com" {
 		t.Fatalf("status=%d response=%+v", recorder.Code, response)
 	}
+}
+
+func TestHandler_Register_NameValidation(t *testing.T) {
+	handler := NewHandler(&mockAuthService{
+		registerFn: func(context.Context, *RegisterRequest) (*RegisterResponse, error) {
+			return nil, apperrors.NewValidationError("name must be between 2 and 60 characters")
+		},
+	})
+	response := assertAPIError(t, serve(handler.Register, `{"email":"ana@exemplo.com","password":"Senha123!"}`),
+		http.StatusUnprocessableEntity, httputil.ErrCodeValidation)
+	if response.Message != "name must be between 2 and 60 characters" {
+		t.Fatalf("message = %q", response.Message)
+	}
+}
+
+func TestHandler_Register_NameWrongType(t *testing.T) {
+	handler := NewHandler(&mockAuthService{
+		registerFn: func(context.Context, *RegisterRequest) (*RegisterResponse, error) {
+			t.Fatal("service must not be called")
+			return nil, nil
+		},
+	})
+	assertAPIError(t, serve(handler.Register, `{"name":123,"email":"a@b.co","password":"Senha123!"}`),
+		http.StatusBadRequest, httputil.ErrCodeBadRequest)
 }
 
 func TestAuthHandler_Login_Success(t *testing.T) {
@@ -273,6 +327,310 @@ func TestAuthHandler_Logout_Errors(t *testing.T) {
 				logoutFn: func(context.Context, *RefreshRequest) error { return tc.err },
 			})
 			assertAPIError(t, serve(handler.Logout, tc.body), tc.status, tc.code)
+		})
+	}
+}
+
+func TestHandler_Me_Success(t *testing.T) {
+	handler := NewHandler(&mockAuthService{
+		meFn: func(context.Context) (*UserResponse, error) {
+			return &UserResponse{ID: 42, Name: "Ana Souza", Email: "ana@exemplo.com"}, nil
+		},
+	})
+	recorder := httptest.NewRecorder()
+	handler.Me(recorder, httptest.NewRequest(http.MethodGet, "/users/me", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if ct := recorder.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"id": float64(42), "name": "Ana Souza", "email": "ana@exemplo.com", "theme": nil}
+	if len(body) != len(want) {
+		t.Fatalf("body keys = %v, want exactly id, name, email, theme", body)
+	}
+	if _, ok := body["theme"]; !ok {
+		t.Fatal("body has no theme key, want theme: null")
+	}
+	for key, value := range want {
+		if body[key] != value {
+			t.Fatalf("body[%q] = %v, want %v", key, body[key], value)
+		}
+	}
+}
+
+func TestHandler_Me_Errors(t *testing.T) {
+	tests := map[string]struct {
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		"unauthorized":      {apperrors.ErrUnauthorized, http.StatusUnauthorized, httputil.ErrCodeUnauthorized, ""},
+		"user not found":    {fmt.Errorf("user %w", apperrors.ErrNotFound), http.StatusNotFound, httputil.ErrCodeNotFound, "user not found"},
+		"wrapped not found": {fmt.Errorf("authService.Me: %w", apperrors.ErrNotFound), http.StatusNotFound, httputil.ErrCodeNotFound, "user not found"},
+		"internal error":    {errors.New("pq: connection refused"), http.StatusInternalServerError, httputil.ErrCodeInternalServerError, "internal server error"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			handler := NewHandler(&mockAuthService{
+				meFn: func(context.Context) (*UserResponse, error) { return nil, tc.err },
+			})
+			recorder := httptest.NewRecorder()
+			handler.Me(recorder, httptest.NewRequest(http.MethodGet, "/users/me", nil))
+			response := assertAPIError(t, recorder, tc.status, tc.code)
+			if tc.message != "" && response.Message != tc.message {
+				t.Fatalf("message = %q, want %q", response.Message, tc.message)
+			}
+			if strings.Contains(response.Message, "pq:") {
+				t.Fatalf("internal error leaked to client: %q", response.Message)
+			}
+		})
+	}
+}
+
+// assertUserResponseBody checks the exact UserResponse JSON of the users endpoints.
+func assertUserResponseBody(t *testing.T, recorder *httptest.ResponseRecorder, want map[string]any) {
+	t.Helper()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", recorder.Code, recorder.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != len(want) {
+		t.Fatalf("body = %v, want exactly %v", body, want)
+	}
+	for key, value := range want {
+		if got, ok := body[key]; !ok || got != value {
+			t.Fatalf("body[%q] = %v, want %v", key, got, value)
+		}
+	}
+}
+
+func TestHandler_UpdateProfile_Success(t *testing.T) {
+	var got *UpdateProfileRequest
+	dark := ThemeDark
+	handler := NewHandler(&mockAuthService{
+		updateProfileFn: func(_ context.Context, req *UpdateProfileRequest) (*UserResponse, error) {
+			got = req
+			return &UserResponse{ID: 7, Name: "Jonas Silva", Email: "jonas@example.com", Theme: &dark}, nil
+		},
+	})
+	recorder := serve(handler.UpdateProfile, `{"name":"Jonas Silva","email":"other@example.com"}`)
+
+	assertUserResponseBody(t, recorder, map[string]any{
+		"id": float64(7), "name": "Jonas Silva", "email": "jonas@example.com", "theme": "DARK",
+	})
+	if got == nil || *got != (UpdateProfileRequest{Name: "Jonas Silva"}) {
+		t.Fatalf("service request = %+v, want only the name", got)
+	}
+}
+
+// userHandlerErrorCases are the error mappings shared by the profile and preferences endpoints.
+var userHandlerErrorCases = map[string]struct {
+	body    string
+	err     error
+	status  int
+	code    string
+	message string
+}{
+	"malformed json": {`{"name":`, nil, http.StatusBadRequest, httputil.ErrCodeBadRequest, "invalid request body"},
+	"validation":     {`{}`, apperrors.NewValidationError("name must be between 2 and 60 characters"), http.StatusUnprocessableEntity, httputil.ErrCodeValidation, "name must be between 2 and 60 characters"},
+	"unauthorized":   {`{}`, apperrors.ErrUnauthorized, http.StatusUnauthorized, httputil.ErrCodeUnauthorized, ""},
+	"internal":       {`{}`, errors.New("pq: connection refused"), http.StatusInternalServerError, httputil.ErrCodeInternalServerError, "internal server error"},
+}
+
+func TestHandler_UpdateProfile_Errors(t *testing.T) {
+	for name, tc := range userHandlerErrorCases {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			handler := NewHandler(&mockAuthService{
+				updateProfileFn: func(context.Context, *UpdateProfileRequest) (*UserResponse, error) {
+					called = true
+					return nil, tc.err
+				},
+			})
+			response := assertAPIError(t, serve(handler.UpdateProfile, tc.body), tc.status, tc.code)
+			if tc.message != "" && response.Message != tc.message {
+				t.Fatalf("message = %q, want %q", response.Message, tc.message)
+			}
+			if tc.err == nil && called {
+				t.Fatal("service must not be called for a malformed body")
+			}
+		})
+	}
+}
+
+func TestHandler_UpdatePreferences_Success(t *testing.T) {
+	var got *UpdatePreferencesRequest
+	handler := NewHandler(&mockAuthService{
+		updatePreferencesFn: func(_ context.Context, req *UpdatePreferencesRequest) (*UserResponse, error) {
+			got = req
+			return &UserResponse{ID: 7, Name: "Jonas Silva", Email: "jonas@example.com", Theme: &req.Theme}, nil
+		},
+	})
+	recorder := serve(handler.UpdatePreferences, `{"theme":"DARK"}`)
+
+	assertUserResponseBody(t, recorder, map[string]any{
+		"id": float64(7), "name": "Jonas Silva", "email": "jonas@example.com", "theme": "DARK",
+	})
+	if got == nil || got.Theme != ThemeDark {
+		t.Fatalf("service request = %+v, want theme DARK", got)
+	}
+}
+
+func TestHandler_UpdatePreferences_Errors(t *testing.T) {
+	for name, tc := range userHandlerErrorCases {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			handler := NewHandler(&mockAuthService{
+				updatePreferencesFn: func(context.Context, *UpdatePreferencesRequest) (*UserResponse, error) {
+					called = true
+					return nil, tc.err
+				},
+			})
+			response := assertAPIError(t, serve(handler.UpdatePreferences, tc.body), tc.status, tc.code)
+			if tc.message != "" && response.Message != tc.message {
+				t.Fatalf("message = %q, want %q", response.Message, tc.message)
+			}
+			if tc.err == nil && called {
+				t.Fatal("service must not be called for a malformed body")
+			}
+		})
+	}
+}
+
+func TestHandler_ChangePassword_Success(t *testing.T) {
+	var got *ChangePasswordRequest
+	handler := NewHandler(&mockAuthService{
+		changePasswordFn: func(_ context.Context, req *ChangePasswordRequest) (*TokenResponse, error) {
+			got = req
+			return &TokenResponse{AccessToken: "access", RefreshToken: "refresh", TokenType: "Bearer"}, nil
+		},
+	})
+	recorder := serve(handler.ChangePassword, `{"current_password":"senha-antiga-1","new_password":"Nova-senha-2026"}`)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", recorder.Code, recorder.Body.String())
+	}
+	var body TokenResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body != (TokenResponse{AccessToken: "access", RefreshToken: "refresh", TokenType: "Bearer"}) {
+		t.Fatalf("body = %+v, want the service token pair", body)
+	}
+	if got == nil || got.CurrentPassword != "senha-antiga-1" || got.NewPassword != "Nova-senha-2026" {
+		t.Fatalf("service request = %+v", got)
+	}
+}
+
+func TestHandler_ChangePassword_InvalidPassword(t *testing.T) {
+	handler := NewHandler(&mockAuthService{
+		changePasswordFn: func(context.Context, *ChangePasswordRequest) (*TokenResponse, error) {
+			return nil, fmt.Errorf("authService.ChangePassword: %w", ErrInvalidPassword)
+		},
+	})
+	recorder := serve(handler.ChangePassword, `{"current_password":"errada-123","new_password":"Nova-senha-2026"}`)
+
+	response := assertAPIError(t, recorder, http.StatusForbidden, httputil.ErrCodeInvalidPassword)
+	if response.Message != "invalid password" {
+		t.Fatalf("message = %q, want invalid password", response.Message)
+	}
+}
+
+func TestHandler_ChangePassword_Errors(t *testing.T) {
+	tests := map[string]struct {
+		body    string
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		"malformed json": {`{"current_password":`, nil, http.StatusBadRequest, httputil.ErrCodeBadRequest, "invalid request body"},
+		"validation":     {`{}`, apperrors.NewValidationError("current_password is required"), http.StatusUnprocessableEntity, httputil.ErrCodeValidation, "current_password is required"},
+		"unauthorized":   {`{}`, apperrors.ErrUnauthorized, http.StatusUnauthorized, httputil.ErrCodeUnauthorized, ""},
+		"internal":       {`{}`, errors.New("pq: connection refused"), http.StatusInternalServerError, httputil.ErrCodeInternalServerError, "internal server error"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			handler := NewHandler(&mockAuthService{
+				changePasswordFn: func(context.Context, *ChangePasswordRequest) (*TokenResponse, error) {
+					called = true
+					return nil, tc.err
+				},
+			})
+			response := assertAPIError(t, serve(handler.ChangePassword, tc.body), tc.status, tc.code)
+			if tc.message != "" && response.Message != tc.message {
+				t.Fatalf("message = %q, want %q", response.Message, tc.message)
+			}
+			if tc.err == nil && called {
+				t.Fatal("service must not be called for a malformed body")
+			}
+		})
+	}
+}
+
+func TestHandler_DeleteAccount_Success(t *testing.T) {
+	var got *DeleteAccountRequest
+	handler := NewHandler(&mockAuthService{
+		deleteAccountFn: func(_ context.Context, req *DeleteAccountRequest) error {
+			got = req
+			return nil
+		},
+	})
+	recorder := serve(handler.DeleteAccount, `{"password":"Nova-senha-2026"}`)
+
+	if recorder.Code != http.StatusNoContent || recorder.Body.Len() != 0 {
+		t.Fatalf("status = %d body = %q, want 204 with no body", recorder.Code, recorder.Body.String())
+	}
+	if got == nil || got.Password != "Nova-senha-2026" {
+		t.Fatalf("service request = %+v", got)
+	}
+}
+
+func TestHandler_DeleteAccount_NoBody(t *testing.T) {
+	handler := NewHandler(&mockAuthService{
+		deleteAccountFn: func(context.Context, *DeleteAccountRequest) error {
+			t.Fatal("service must not be called without a body")
+			return nil
+		},
+	})
+	response := assertAPIError(t, serve(handler.DeleteAccount, ""), http.StatusBadRequest, httputil.ErrCodeBadRequest)
+	if response.Message != "invalid request body" {
+		t.Fatalf("message = %q, want invalid request body", response.Message)
+	}
+}
+
+func TestHandler_DeleteAccount_Errors(t *testing.T) {
+	tests := map[string]struct {
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		"invalid password": {ErrInvalidPassword, http.StatusForbidden, httputil.ErrCodeInvalidPassword, "invalid password"},
+		"validation":       {apperrors.NewValidationError("password is required"), http.StatusUnprocessableEntity, httputil.ErrCodeValidation, "password is required"},
+		"unauthorized":     {apperrors.ErrUnauthorized, http.StatusUnauthorized, httputil.ErrCodeUnauthorized, ""},
+		"internal":         {errors.New("pq: connection refused"), http.StatusInternalServerError, httputil.ErrCodeInternalServerError, "internal server error"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			handler := NewHandler(&mockAuthService{
+				deleteAccountFn: func(context.Context, *DeleteAccountRequest) error { return tc.err },
+			})
+			response := assertAPIError(t, serve(handler.DeleteAccount, `{"password":"x"}`), tc.status, tc.code)
+			if tc.message != "" && response.Message != tc.message {
+				t.Fatalf("message = %q, want %q", response.Message, tc.message)
+			}
 		})
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel"
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
+	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 	"github.com/jonasjesusamerico/we-sync-api/internal/logger"
 )
 
@@ -30,6 +32,18 @@ const authTracerName = "we-sync-api/auth"
 
 // defaultPasswordCost is the bcrypt cost used for stored password hashes.
 const defaultPasswordCost = 12
+
+// Password limits in bytes: bcrypt only uses the first 72.
+const (
+	minPasswordBytes = 8
+	maxPasswordBytes = 72
+)
+
+// Name limits in characters (Unicode code points), not bytes, so accented names are not cut short (RN-01).
+const (
+	minNameRunes = 2
+	maxNameRunes = 60
+)
 
 var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
@@ -94,6 +108,10 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	if req == nil {
 		return nil, recordAuthError(span, apperrors.NewValidationError("request is required"))
 	}
+	name := strings.TrimSpace(req.Name)
+	if err := validateName(name); err != nil {
+		return nil, recordAuthError(span, err)
+	}
 	email := normalizeEmail(req.Email)
 	if err := validateEmail(email); err != nil {
 		return nil, recordAuthError(span, err)
@@ -112,7 +130,7 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register hash password: %w", err))
 	}
 
-	user, err := s.repo.CreateUser(ctx, email, string(passwordHash))
+	user, err := s.repo.CreateUser(ctx, name, email, string(passwordHash))
 	if err != nil {
 		return nil, recordAuthError(span, fmt.Errorf("authService.Register: %w", err))
 	}
@@ -125,7 +143,214 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		attribute.Int64("user.id", user.ID),
 		attribute.String("auth.method", "register"),
 	)
-	return &RegisterResponse{ID: user.ID, Email: user.Email}, nil
+	return &RegisterResponse{ID: user.ID, Name: user.Name, Email: user.Email}, nil
+}
+
+// Me returns the public data of the authenticated user. The user id comes only
+// from the context, so a caller can never read another user.
+func (s *Service) Me(ctx context.Context) (*UserResponse, error) {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.Me")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return nil, recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	span.SetAttributes(attribute.Int64("user.id", userID))
+
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.Me: %w", err))
+	}
+	if user == nil {
+		return nil, recordAuthError(span, fmt.Errorf("user %w", apperrors.ErrNotFound))
+	}
+	return toUserResponse(user), nil
+}
+
+// UpdateProfile changes the authenticated user's name. The e-mail is never read from the request.
+func (s *Service) UpdateProfile(ctx context.Context, req *UpdateProfileRequest) (*UserResponse, error) {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.UpdateProfile")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return nil, recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	span.SetAttributes(attribute.Int64("user.id", userID))
+	if req == nil {
+		return nil, recordAuthError(span, apperrors.NewValidationError("name must be between 2 and 60 characters"))
+	}
+	name := strings.TrimSpace(req.Name)
+	if err := validateName(name); err != nil {
+		return nil, recordAuthError(span, err)
+	}
+
+	user, err := s.repo.UpdateName(ctx, userID, name)
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.UpdateProfile: %w", err))
+	}
+	if user == nil {
+		// The account was deleted between the JWT middleware and the update.
+		return nil, recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	return toUserResponse(user), nil
+}
+
+// UpdatePreferences saves the authenticated user's theme in the account.
+func (s *Service) UpdatePreferences(ctx context.Context, req *UpdatePreferencesRequest) (*UserResponse, error) {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.UpdatePreferences")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return nil, recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	span.SetAttributes(attribute.Int64("user.id", userID))
+	if req == nil || !req.Theme.IsValid() {
+		return nil, recordAuthError(span, apperrors.NewValidationError("theme must be LIGHT or DARK"))
+	}
+
+	user, err := s.repo.UpdateTheme(ctx, userID, req.Theme)
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.UpdatePreferences: %w", err))
+	}
+	if user == nil {
+		// The account was deleted between the JWT middleware and the update.
+		return nil, recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	span.SetAttributes(attribute.String("user.theme", string(req.Theme)))
+	return toUserResponse(user), nil
+}
+
+// ChangePassword replaces the authenticated user's password after checking the current one. Every
+// other session ends (refresh tokens revoked, access tokens rejected by the session version) and the
+// caller gets a new token pair (ADR-01 and ADR-02 of feature 006).
+func (s *Service) ChangePassword(ctx context.Context, req *ChangePasswordRequest) (*TokenResponse, error) {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.ChangePassword")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return nil, recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	span.SetAttributes(
+		attribute.Int64("user.id", userID),
+		attribute.String("auth.method", "change_password"),
+	)
+	// Validation order of the contract. Passwords are never trimmed.
+	if req == nil || req.CurrentPassword == "" {
+		return nil, recordAuthError(span, apperrors.NewValidationError("current_password is required"))
+	}
+	if len(req.NewPassword) < minPasswordBytes || len(req.NewPassword) > maxPasswordBytes {
+		return nil, recordAuthError(span, apperrors.NewValidationError("new_password must be between 8 and 72 bytes"))
+	}
+	if req.NewPassword == req.CurrentPassword {
+		return nil, recordAuthError(span, apperrors.NewValidationError("new_password must be different from current_password"))
+	}
+
+	oldHash, err := s.checkPassword(ctx, userID, req.CurrentPassword, "change_password")
+	if err != nil {
+		return nil, recordAuthError(span, err)
+	}
+
+	release, err := s.acquirePasswordSlot(ctx)
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.ChangePassword: %w", err))
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), s.passwordCost)
+	release()
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.ChangePassword hash password: %w", err))
+	}
+
+	rawRefreshToken, err := newRefreshToken()
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.ChangePassword generate token: %w", err))
+	}
+	version, changed, err := s.repo.ChangePassword(ctx, userID, oldHash, string(newHash), sha256Hex(rawRefreshToken), time.Now().Add(s.refreshTTL))
+	if err != nil {
+		return nil, recordAuthError(span, fmt.Errorf("authService.ChangePassword: %w", err))
+	}
+	if !changed {
+		// Another request changed the password (or deleted the account) after checkPassword read the hash.
+		logger.FromContext(ctx).Warn("password changed concurrently")
+		return nil, recordAuthError(span, ErrInvalidPassword)
+	}
+
+	accessToken, err := s.issueAccessToken(userID, version)
+	if err != nil {
+		return nil, recordAuthError(span, err)
+	}
+	return &TokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: rawRefreshToken,
+		TokenType:    "Bearer",
+	}, nil
+}
+
+// DeleteAccount deletes the authenticated user and all their data after checking the password. It
+// cannot be undone; the e-mail becomes free (ADR-04 of feature 006).
+func (s *Service) DeleteAccount(ctx context.Context, req *DeleteAccountRequest) error {
+	ctx, span := otel.Tracer(authTracerName).Start(ctx, "authService.DeleteAccount")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return recordAuthError(span, apperrors.ErrUnauthorized)
+	}
+	span.SetAttributes(
+		attribute.Int64("user.id", userID),
+		attribute.String("auth.method", "delete_account"),
+	)
+	if req == nil || req.Password == "" {
+		return recordAuthError(span, apperrors.NewValidationError("password is required"))
+	}
+
+	hash, err := s.checkPassword(ctx, userID, req.Password, "delete_account")
+	if err != nil {
+		return recordAuthError(span, err)
+	}
+	deleted, err := s.repo.DeleteUser(ctx, userID, hash)
+	if err != nil {
+		return recordAuthError(span, fmt.Errorf("authService.DeleteAccount: %w", err))
+	}
+	if !deleted {
+		// The password changed (or the account was deleted) after checkPassword: nothing is deleted.
+		return recordAuthError(span, ErrInvalidPassword)
+	}
+
+	logger.FromContext(ctx).Info("account deleted")
+	return nil
+}
+
+// checkPassword confirms the password of an authenticated operation and returns the hash it compared
+// against, so the write can be a compare-and-set on it. A wrong password returns ErrInvalidPassword
+// (logged as a warning, never with the password or the hash); a missing user returns ErrUnauthorized.
+func (s *Service) checkPassword(ctx context.Context, userID int64, password, operation string) (string, error) {
+	hash, found, err := s.repo.GetPasswordHash(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("authService.checkPassword: %w", err)
+	}
+	if !found {
+		return "", apperrors.ErrUnauthorized
+	}
+
+	release, err := s.acquirePasswordSlot(ctx)
+	if err != nil {
+		return "", fmt.Errorf("authService.checkPassword: %w", err)
+	}
+	compareErr := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	release()
+	if compareErr != nil {
+		logger.FromContext(ctx).Warn("invalid password confirmation", "operation", operation)
+		return "", ErrInvalidPassword
+	}
+	return hash, nil
+}
+
+func toUserResponse(u *User) *UserResponse {
+	return &UserResponse{ID: u.ID, Name: u.Name, Email: u.Email, Theme: u.Theme}
 }
 
 // Login validates credentials and returns a JWT access token and refresh token.
@@ -156,7 +381,7 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest) (*TokenResponse,
 		return nil, recordAuthError(span, newInvalidCredentialsError())
 	}
 
-	response, err := s.issueTokens(ctx, user.ID)
+	response, err := s.issueTokens(ctx, user.ID, user.SessionVersion)
 	if err != nil {
 		return nil, recordAuthError(span, err)
 	}
@@ -184,7 +409,7 @@ func (s *Service) Refresh(ctx context.Context, req *RefreshRequest) (*TokenRespo
 		return nil, recordAuthError(span, newInvalidCredentialsError())
 	}
 
-	accessToken, err := s.issueAccessToken(token.UserID)
+	accessToken, err := s.issueAccessToken(token.UserID, token.UserSessionVersion)
 	if err != nil {
 		return nil, recordAuthError(span, err)
 	}
@@ -221,8 +446,8 @@ func (s *Service) Logout(ctx context.Context, req *RefreshRequest) error {
 	return nil
 }
 
-func (s *Service) issueTokens(ctx context.Context, userID int64) (*TokenResponse, error) {
-	accessToken, err := s.issueAccessToken(userID)
+func (s *Service) issueTokens(ctx context.Context, userID, sessionVersion int64) (*TokenResponse, error) {
+	accessToken, err := s.issueAccessToken(userID, sessionVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -241,15 +466,20 @@ func (s *Service) issueTokens(ctx context.Context, userID int64) (*TokenResponse
 	}, nil
 }
 
-func (s *Service) issueAccessToken(userID int64) (string, error) {
+// issueAccessToken signs an access token carrying the user's current session version ("sv"), which
+// the JWT middleware compares with users.session_version on every request (ADR-01 of feature 006).
+func (s *Service) issueAccessToken(userID, sessionVersion int64) (string, error) {
 	now := time.Now()
-	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{
-		Subject:   strconv.FormatInt(userID, 10),
-		Issuer:    JWTIssuer,
-		Audience:  jwt.ClaimStrings{JWTAudience},
-		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
-	}}
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   strconv.FormatInt(userID, 10),
+			Issuer:    JWTIssuer,
+			Audience:  jwt.ClaimStrings{JWTAudience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
+		},
+		SessionVersion: sessionVersion,
+	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
 }
 
@@ -265,6 +495,14 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+// validateName expects an already trimmed name.
+func validateName(name string) error {
+	if n := utf8.RuneCountInString(name); n < minNameRunes || n > maxNameRunes {
+		return apperrors.NewValidationError("name must be between 2 and 60 characters")
+	}
+	return nil
+}
+
 func validateEmail(email string) error {
 	if len(email) == 0 || len(email) > 254 || !emailPattern.MatchString(email) {
 		return apperrors.NewValidationError("email is invalid")
@@ -273,7 +511,7 @@ func validateEmail(email string) error {
 }
 
 func validatePassword(password string) error {
-	if len(password) < 8 || len(password) > 72 {
+	if len(password) < minPasswordBytes || len(password) > maxPasswordBytes {
 		return apperrors.NewValidationError("password must be between 8 and 72 bytes")
 	}
 	return nil

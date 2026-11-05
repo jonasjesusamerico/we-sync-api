@@ -21,7 +21,7 @@ The purchase entry must contain the following fields:
 >
 > The fixed `payment_method` enum was later replaced by `payment_method_id`, backed by the
 > payment methods feature, which follows the same global + personal model
-> (see [`docs/specs/001-payment-methods`](../specs/001-payment-methods/spec.md)).
+> (see `../we-sync-requirements/docs/legacy/we-sync-api/001-payment-methods/spec.md`).
 
 ## Business Rules
 
@@ -99,7 +99,8 @@ The purchase entry must contain the following fields:
 |---|---|---|
 | 400 | `BAD_REQUEST` | Malformed JSON or wrong `purchase_date` format |
 | 401 | `UNAUTHORIZED` | Missing or invalid access token |
-| 404 | `NOT_FOUND` | `category_id` or `payment_method_id` does not exist or belongs to another user |
+| 404 | `CATEGORY_NOT_FOUND` | `category_id` does not exist or belongs to another user |
+| 404 | `PAYMENT_METHOD_NOT_FOUND` | `payment_method_id` does not exist or belongs to another user |
 | 422 | `VALIDATION_ERROR` | A business rule above is violated |
 
 The source of truth for the data model is `internal/purchase/model.go`

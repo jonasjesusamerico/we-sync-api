@@ -152,6 +152,7 @@ const docTemplate = `{
         },
         "/auth/register": {
             "post": {
+                "description": "Creates a user. name is trimmed and must have 2 to 60 characters; email is trimmed and lowercased.",
                 "consumes": [
                     "application/json"
                 ],
@@ -181,19 +182,25 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Invalid request body",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "Email already registered",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
                     },
                     "422": {
-                        "description": "Unprocessable Entity",
+                        "description": "Validation error (name, email or password)",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -203,7 +210,7 @@ const docTemplate = `{
         },
         "/categories": {
             "get": {
-                "description": "Returns all categories visible to the authenticated user (global + personal).",
+                "description": "Returns all categories visible to the authenticated user (global + personal), archived ones\nincluded; archived_at tells them apart.",
                 "produces": [
                     "application/json"
                 ],
@@ -236,7 +243,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Creates a new personal category for the authenticated user.",
+                "description": "Creates a personal category for the authenticated user, or reactivates the user's archived\ncategory with the same name (case- and accent-insensitive): the stored name is kept and the\nicon and color sent are applied.",
                 "consumes": [
                     "application/json"
                 ],
@@ -259,6 +266,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Reactivated",
+                        "schema": {
+                            "$ref": "#/definitions/category.Category"
+                        }
+                    },
                     "201": {
                         "description": "Created",
                         "schema": {
@@ -278,7 +291,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Name already exists",
+                        "description": "DEFAULT_NAME_CONFLICT or NAME_CONFLICT",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -300,7 +313,7 @@ const docTemplate = `{
         },
         "/categories/{id}": {
             "put": {
-                "description": "Renames a personal category owned by the authenticated user.",
+                "description": "Replaces the name, icon and color of a personal category (active or archived) owned by the\nauthenticated user.",
                 "consumes": [
                     "application/json"
                 ],
@@ -349,7 +362,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Cannot modify a global category",
+                        "description": "Cannot change a default category",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -361,7 +374,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Name already exists",
+                        "description": "DEFAULT_NAME_CONFLICT, NAME_CONFLICT or ARCHIVED_NAME_CONFLICT",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -379,16 +392,18 @@ const docTemplate = `{
                         }
                     }
                 }
-            },
-            "delete": {
-                "description": "Removes a personal category owned by the authenticated user.",
+            }
+        },
+        "/categories/{id}/archive": {
+            "put": {
+                "description": "Archives a personal category. Its purchases do not change. Archiving an archived category\nis a no-op (idempotent).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "categories"
                 ],
-                "summary": "Delete a personal category",
+                "summary": "Archive a personal category",
                 "parameters": [
                     {
                         "type": "integer",
@@ -415,7 +430,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Cannot delete a global category",
+                        "description": "Cannot change a default category",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -426,8 +441,56 @@ const docTemplate = `{
                             "$ref": "#/definitions/httputil.APIError"
                         }
                     },
-                    "409": {
-                        "description": "Category in use by purchase entries",
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Reactivates an archived personal category. Reactivating an active category is a no-op\n(idempotent).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "categories"
+                ],
+                "summary": "Reactivate a personal category",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Category ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Invalid ID",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot change a default category",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -443,7 +506,7 @@ const docTemplate = `{
         },
         "/payment-methods": {
             "get": {
-                "description": "Returns all payment methods visible to the authenticated user (global + personal).",
+                "description": "Returns all payment methods visible to the authenticated user (global + personal), archived ones\nincluded; archived_at tells them apart.",
                 "produces": [
                     "application/json"
                 ],
@@ -476,7 +539,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Creates a new personal payment method for the authenticated user.",
+                "description": "Creates a personal payment method for the authenticated user, or reactivates the user's archived\npayment method with the same name (case- and accent-insensitive), keeping the stored name.\nFields other than name (such as icon and color) are ignored.",
                 "consumes": [
                     "application/json"
                 ],
@@ -489,7 +552,7 @@ const docTemplate = `{
                 "summary": "Create a personal payment method",
                 "parameters": [
                     {
-                        "description": "PaymentMethod data",
+                        "description": "Payment method data",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -499,6 +562,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Reactivated",
+                        "schema": {
+                            "$ref": "#/definitions/paymentmethod.PaymentMethod"
+                        }
+                    },
                     "201": {
                         "description": "Created",
                         "schema": {
@@ -518,7 +587,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Name already exists",
+                        "description": "DEFAULT_NAME_CONFLICT or NAME_CONFLICT",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -540,7 +609,7 @@ const docTemplate = `{
         },
         "/payment-methods/{id}": {
             "put": {
-                "description": "Renames a personal payment method owned by the authenticated user.",
+                "description": "Renames a personal payment method (active or archived) owned by the authenticated user.",
                 "consumes": [
                     "application/json"
                 ],
@@ -589,7 +658,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Cannot modify a global payment method",
+                        "description": "Cannot change a default payment method",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -601,7 +670,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Name already exists",
+                        "description": "DEFAULT_NAME_CONFLICT, NAME_CONFLICT or ARCHIVED_NAME_CONFLICT",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -619,16 +688,18 @@ const docTemplate = `{
                         }
                     }
                 }
-            },
-            "delete": {
-                "description": "Removes a personal payment method owned by the authenticated user.",
+            }
+        },
+        "/payment-methods/{id}/archive": {
+            "put": {
+                "description": "Archives a personal payment method. Its purchases do not change. Archiving an archived payment method\nis a no-op (idempotent).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "payment-methods"
                 ],
-                "summary": "Delete a personal payment method",
+                "summary": "Archive a personal payment method",
                 "parameters": [
                     {
                         "type": "integer",
@@ -655,7 +726,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Cannot delete a global payment method",
+                        "description": "Cannot change a default payment method",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -666,8 +737,56 @@ const docTemplate = `{
                             "$ref": "#/definitions/httputil.APIError"
                         }
                     },
-                    "409": {
-                        "description": "PaymentMethod in use by purchase entries",
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Reactivates an archived personal payment method. Reactivating an active payment method is a no-op\n(idempotent).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payment-methods"
+                ],
+                "summary": "Reactivate a personal payment method",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment method ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Invalid ID",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot change a default payment method",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -683,7 +802,7 @@ const docTemplate = `{
         },
         "/purchases": {
             "get": {
-                "description": "Returns a paginated and filtered list of purchase entries.",
+                "description": "Returns a paginated and filtered list of purchase entries, newest first, with the count and the\namount (without CANCELED) of the whole filter.",
                 "produces": [
                     "application/json"
                 ],
@@ -728,6 +847,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "Text searched anywhere in the description, ignoring case and accents (trimmed; at most 255 characters)",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "description": "Page number (default 1)",
                         "name": "page",
@@ -749,6 +874,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid query parameter",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "page_size above 100 or q above 255 characters",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -798,13 +929,68 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Category or payment method not found",
+                        "description": "CATEGORY_NOT_FOUND or PAYMENT_METHOD_NOT_FOUND: category or payment method not found or not accessible",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
                     },
                     "422": {
                         "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/purchases/summary": {
+            "get": {
+                "description": "Spent amount of the month (PAID + PENDING, every day of the month) and the comparison with the\nprevious month over the same period: up to today's day when the month is today's month, else the\nwhole months. today is the client's local date and only decides the period.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "purchases"
+                ],
+                "summary": "Month spending summary",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Year (1-9999)",
+                        "name": "year",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Month (1-12)",
+                        "name": "month",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client local date (YYYY-MM-DD)",
+                        "name": "today",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/purchase.MonthSummary"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid year, month or today",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -908,7 +1094,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Purchase, category or payment method not found",
+                        "description": "NOT_FOUND: purchase not found; CATEGORY_NOT_FOUND or PAYMENT_METHOD_NOT_FOUND: category or payment method not found or not accessible",
                         "schema": {
                             "$ref": "#/definitions/httputil.APIError"
                         }
@@ -969,9 +1155,305 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/users/me": {
+            "get": {
+                "description": "Returns the id, name, e-mail and theme of the user identified by the access token.\ntheme is LIGHT, DARK or null when never chosen in the account.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Get the authenticated user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.UserResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or invalid authentication token",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "User not found",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Deletes the account and all its data (purchases, own categories and payment methods, sessions). It cannot be undone.\nThe password confirms the operation and is never trimmed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Delete the account",
+                "parameters": [
+                    {
+                        "description": "Password confirmation",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.DeleteAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Invalid or missing request body",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or invalid authentication token",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "INVALID_PASSWORD: the password does not match",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/password": {
+            "put": {
+                "description": "Checks current_password and stores new_password (8 to 72 bytes, never trimmed, different from the current one).\nEvery other session ends: previous refresh tokens are revoked and previous access tokens get 401.\nReturns a new token pair for the caller.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Change the password",
+                "parameters": [
+                    {
+                        "description": "Current and new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.ChangePasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.TokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or invalid authentication token",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "INVALID_PASSWORD: the current password does not match",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/preferences": {
+            "put": {
+                "description": "Saves the theme in the account (LIGHT or DARK).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Update the preferences",
+                "parameters": [
+                    {
+                        "description": "Preferences",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.UpdatePreferencesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.UserResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or invalid authentication token",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/profile": {
+            "put": {
+                "description": "Replaces the name (trimmed, 2 to 60 characters). The e-mail never changes: an email field in the body is ignored.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Update the profile",
+                "parameters": [
+                    {
+                        "description": "Profile data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.UpdateProfileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.UserResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or invalid authentication token",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "auth.ChangePasswordRequest": {
+            "type": "object",
+            "properties": {
+                "current_password": {
+                    "type": "string"
+                },
+                "new_password": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.DeleteAccountRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
         "auth.LoginRequest": {
             "type": "object",
             "properties": {
@@ -997,6 +1479,9 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
+                "name": {
+                    "type": "string"
+                },
                 "password": {
                     "type": "string"
                 }
@@ -1010,8 +1495,22 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
+        },
+        "auth.Theme": {
+            "type": "string",
+            "enum": [
+                "LIGHT",
+                "DARK"
+            ],
+            "x-enum-varnames": [
+                "ThemeLight",
+                "ThemeDark"
+            ]
         },
         "auth.TokenResponse": {
             "type": "object",
@@ -1027,11 +1526,54 @@ const docTemplate = `{
                 }
             }
         },
+        "auth.UpdatePreferencesRequest": {
+            "type": "object",
+            "properties": {
+                "theme": {
+                    "$ref": "#/definitions/auth.Theme"
+                }
+            }
+        },
+        "auth.UpdateProfileRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.UserResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "theme": {
+                    "$ref": "#/definitions/auth.Theme"
+                }
+            }
+        },
         "category.Category": {
             "type": "object",
             "properties": {
+                "archived_at": {
+                    "description": "null = active",
+                    "type": "string"
+                },
+                "color": {
+                    "$ref": "#/definitions/category.Color"
+                },
                 "created_at": {
                     "type": "string"
+                },
+                "icon": {
+                    "$ref": "#/definitions/category.Icon"
                 },
                 "id": {
                     "type": "integer"
@@ -1053,6 +1595,12 @@ const docTemplate = `{
         "category.CategorySummary": {
             "type": "object",
             "properties": {
+                "color": {
+                    "$ref": "#/definitions/category.Color"
+                },
+                "icon": {
+                    "$ref": "#/definitions/category.Icon"
+                },
                 "id": {
                     "type": "integer"
                 },
@@ -1064,17 +1612,77 @@ const docTemplate = `{
                 }
             }
         },
+        "category.Color": {
+            "type": "string",
+            "enum": [
+                "FOOD",
+                "TRANSPORT",
+                "HOME",
+                "HEALTH",
+                "EDUCATION",
+                "LEISURE",
+                "NEUTRAL"
+            ],
+            "x-enum-varnames": [
+                "ColorFood",
+                "ColorTransport",
+                "ColorHome",
+                "ColorHealth",
+                "ColorEducation",
+                "ColorLeisure",
+                "ColorNeutral"
+            ]
+        },
         "category.CreateCategoryRequest": {
             "type": "object",
             "properties": {
+                "color": {
+                    "$ref": "#/definitions/category.Color"
+                },
+                "icon": {
+                    "$ref": "#/definitions/category.Icon"
+                },
                 "name": {
                     "type": "string"
                 }
             }
         },
+        "category.Icon": {
+            "type": "string",
+            "enum": [
+                "TAG",
+                "HEART",
+                "SMILE",
+                "BOOK",
+                "CAR",
+                "HOUSE",
+                "FOOD",
+                "CARD",
+                "GIFT",
+                "SPARKLE"
+            ],
+            "x-enum-varnames": [
+                "IconTag",
+                "IconHeart",
+                "IconSmile",
+                "IconBook",
+                "IconCar",
+                "IconHouse",
+                "IconFood",
+                "IconCard",
+                "IconGift",
+                "IconSparkle"
+            ]
+        },
         "category.UpdateCategoryRequest": {
             "type": "object",
             "properties": {
+                "color": {
+                    "$ref": "#/definitions/category.Color"
+                },
+                "icon": {
+                    "$ref": "#/definitions/category.Icon"
+                },
                 "name": {
                     "type": "string"
                 }
@@ -1102,6 +1710,10 @@ const docTemplate = `{
         "paymentmethod.PaymentMethod": {
             "type": "object",
             "properties": {
+                "archived_at": {
+                    "description": "null = active",
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -1144,6 +1756,67 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.Comparison": {
+            "type": "object",
+            "properties": {
+                "current_amount": {
+                    "type": "number"
+                },
+                "percent": {
+                    "description": "null only in NO_BASE",
+                    "type": "integer"
+                },
+                "period": {
+                    "$ref": "#/definitions/purchase.ComparisonPeriod"
+                },
+                "previous_amount": {
+                    "type": "number"
+                },
+                "previous_month": {
+                    "type": "integer"
+                },
+                "previous_year": {
+                    "type": "integer"
+                },
+                "result": {
+                    "$ref": "#/definitions/purchase.ComparisonResult"
+                },
+                "until_day": {
+                    "description": "null in FULL_MONTH",
+                    "type": "integer"
+                }
+            }
+        },
+        "purchase.ComparisonPeriod": {
+            "type": "string",
+            "enum": [
+                "UNTIL_DAY",
+                "FULL_MONTH"
+            ],
+            "x-enum-varnames": [
+                "PeriodUntilDay",
+                "PeriodFullMonth"
+            ]
+        },
+        "purchase.ComparisonResult": {
+            "type": "string",
+            "enum": [
+                "MORE",
+                "LESS",
+                "EQUAL",
+                "NO_BASE"
+            ],
+            "x-enum-comments": {
+                "ResultEqual": "rounded percent is 0",
+                "ResultNoBase": "previous amount is 0: no percent"
+            },
+            "x-enum-varnames": [
+                "ResultMore",
+                "ResultLess",
+                "ResultEqual",
+                "ResultNoBase"
+            ]
+        },
         "purchase.CreatePurchaseRequest": {
             "type": "object",
             "properties": {
@@ -1175,6 +1848,28 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.MonthSummary": {
+            "type": "object",
+            "properties": {
+                "comparison": {
+                    "$ref": "#/definitions/purchase.Comparison"
+                },
+                "month": {
+                    "type": "integer"
+                },
+                "purchase_count": {
+                    "description": "every status",
+                    "type": "integer"
+                },
+                "spent": {
+                    "description": "PAID + PENDING of the whole month",
+                    "type": "number"
+                },
+                "year": {
+                    "type": "integer"
+                }
+            }
+        },
         "purchase.PaginatedResult": {
             "type": "object",
             "properties": {
@@ -1192,6 +1887,9 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                },
+                "total_amount": {
+                    "type": "number"
                 },
                 "total_pages": {
                     "type": "integer"

@@ -41,6 +41,7 @@ func New(
 	enableSwagger bool,
 	corsAllowedOrigins []string,
 	jwtSecret []byte,
+	sessions middleware.SessionVersions,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -68,13 +69,13 @@ func New(
 	})
 
 	r.Route("/api", func(r chi.Router) {
-		registerV1(r, h, jwtSecret)
+		registerV1(r, h, jwtSecret, sessions)
 	})
 
 	return r
 }
 
-func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
+func registerV1(r chi.Router, h Handlers, jwtSecret []byte, sessions middleware.SessionVersions) {
 	r.Route("/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register", h.Auth.Register)
@@ -84,10 +85,17 @@ func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.JWTWithConfig(jwtSecret, auth.JWTIssuer, auth.JWTAudience, 24*time.Hour))
+			r.Use(middleware.JWTWithConfig(jwtSecret, auth.JWTIssuer, auth.JWTAudience, 24*time.Hour, sessions))
+			r.Get("/users/me", h.Auth.Me)
+			r.Put("/users/me/profile", h.Auth.UpdateProfile)
+			r.Put("/users/me/preferences", h.Auth.UpdatePreferences)
+			r.Put("/users/me/password", h.Auth.ChangePassword)
+			r.Delete("/users/me", h.Auth.DeleteAccount)
 			r.Route("/purchases", func(r chi.Router) {
 				r.Get("/", h.Purchase.List)
 				r.Post("/", h.Purchase.Create)
+				// Before /{id}, so "summary" is never parsed as a purchase id.
+				r.Get("/summary", h.Purchase.Summary)
 				r.Get("/{id}", h.Purchase.GetByID)
 				r.Put("/{id}", h.Purchase.Update)
 				r.Delete("/{id}", h.Purchase.Delete)
@@ -96,13 +104,18 @@ func registerV1(r chi.Router, h Handlers, jwtSecret []byte) {
 				r.Get("/", h.Category.List)
 				r.Post("/", h.Category.Create)
 				r.Put("/{id}", h.Category.Update)
-				r.Delete("/{id}", h.Category.Delete)
+				// Archiving is a sub-resource: PUT archives, DELETE reactivates (ADR-08 of feature 006).
+				// DELETE /{id} no longer exists: the router answers 405.
+				r.Put("/{id}/archive", h.Category.Archive)
+				r.Delete("/{id}/archive", h.Category.Unarchive)
 			})
 			r.Route("/payment-methods", func(r chi.Router) {
 				r.Get("/", h.PaymentMethod.List)
 				r.Post("/", h.PaymentMethod.Create)
 				r.Put("/{id}", h.PaymentMethod.Update)
-				r.Delete("/{id}", h.PaymentMethod.Delete)
+				// Same archive sub-resource as categories; DELETE /{id} answers 405.
+				r.Put("/{id}/archive", h.PaymentMethod.Archive)
+				r.Delete("/{id}/archive", h.PaymentMethod.Unarchive)
 			})
 		})
 	})

@@ -5,16 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
 	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 )
 
 const tracerName = "we-sync-api/paymentmethod"
+
+// maxNameRunes is the maximum name length, in characters (runes) after trimming; old names may be longer
+// and stay valid until edited (RN-12 of feature 006).
+const maxNameRunes = 40
 
 // Service implements the payment method business rules.
 type Service struct {
@@ -26,44 +32,69 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// Create validates and persists a new personal payment method for the authenticated user.
-func (s *Service) Create(ctx context.Context, req *CreatePaymentMethodRequest) (*PaymentMethod, error) {
+// validateName trims the name and checks it in the contract order. It returns the trimmed name or the
+// first validation error.
+func validateName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", apperrors.NewValidationError("name is required")
+	}
+	if utf8.RuneCountInString(name) > maxNameRunes {
+		return "", apperrors.NewValidationError("name must be at most %d characters", maxNameRunes)
+	}
+	return name, nil
+}
+
+// Create validates and persists a new personal payment method for the authenticated user, or reactivates the
+// user's archived payment method with the same name. The bool is true when a payment method was created and false
+// when an archived one was reactivated.
+func (s *Service) Create(ctx context.Context, req *CreatePaymentMethodRequest) (*PaymentMethod, bool, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "paymentMethodService.Create")
 	defer span.End()
 
 	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
-		return nil, apperrors.ErrUnauthorized
+		return nil, false, apperrors.ErrUnauthorized
 	}
-	if req == nil || strings.TrimSpace(req.Name) == "" {
+	if req == nil {
 		err := apperrors.NewValidationError("name is required")
 		span.SetStatus(codes.Error, err.Error())
-		return nil, err
+		return nil, false, err
 	}
-	req.Name = strings.TrimSpace(req.Name)
+	name, err := validateName(req.Name)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, false, err
+	}
+	req.Name = name
 
 	// Prevent creating a personal payment method with the same name as a global one.
 	if err := s.checkGlobalNameCollision(ctx, req.Name); err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 
-	pm, err := s.repo.Create(ctx, userID, req)
+	pm, inserted, err := s.repo.Create(ctx, userID, req)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrConflict) {
-			span.SetStatus(codes.Error, err.Error())
-			return nil, err
+			span.SetStatus(codes.Error, ErrNameConflict.Error())
+			return nil, false, ErrNameConflict
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("paymentMethodService.Create: %w", err)
+		return nil, false, fmt.Errorf("paymentMethodService.Create: %w", err)
+	}
+	if pm == nil {
+		// An active own payment method already has this name.
+		span.SetStatus(codes.Error, ErrNameConflict.Error())
+		return nil, false, ErrNameConflict
 	}
 
-	span.SetAttributes(attribute.Int64("payment_method.id", pm.ID))
-	return pm, nil
+	span.SetAttributes(attribute.Int64("payment_method.id", pm.ID), attribute.Bool("payment_method.reactivated", !inserted))
+	return pm, inserted, nil
 }
 
-// List returns all payment methods visible to the authenticated user.
+// List returns all payment methods visible to the authenticated user, archived ones included.
 func (s *Service) List(ctx context.Context) ([]PaymentMethod, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "paymentMethodService.List")
 	defer span.End()
@@ -84,9 +115,10 @@ func (s *Service) List(ctx context.Context) ([]PaymentMethod, error) {
 	return items, nil
 }
 
-// Update renames a personal payment method owned by the authenticated user.
-// Returns apperrors.ErrNotFound if the payment method does not exist or belongs to another user.
-// Returns apperrors.ErrForbidden if the payment method is global.
+// Update renames a personal payment method (active or archived) owned by the authenticated user.
+// Returns apperrors.ErrNotFound if the payment method does not exist or belongs to another user,
+// apperrors.ErrForbidden if it is global, and ErrDefaultNameConflict, ErrNameConflict or
+// ErrArchivedNameConflict when the name is taken.
 func (s *Service) Update(ctx context.Context, id int64, req *UpdatePaymentMethodRequest) (*PaymentMethod, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "paymentMethodService.Update")
 	defer span.End()
@@ -97,32 +129,21 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdatePaymentMethod
 	}
 	span.SetAttributes(attribute.Int64("payment_method.id", id))
 
-	if req == nil || strings.TrimSpace(req.Name) == "" {
+	if req == nil {
 		err := apperrors.NewValidationError("name is required")
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	req.Name = strings.TrimSpace(req.Name)
-
-	// Verify the payment method exists and is not global before attempting the update.
-	existing, err := s.repo.GetByID(ctx, id)
+	name, err := validateName(req.Name)
 	if err != nil {
-		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("paymentMethodService.Update: %w", err)
+		return nil, err
 	}
-	if existing == nil {
-		span.SetStatus(codes.Error, "not found")
-		return nil, apperrors.ErrNotFound
-	}
-	if existing.IsGlobal {
-		span.SetStatus(codes.Error, "forbidden: global payment method")
-		return nil, apperrors.ErrForbidden
-	}
-	if !existing.AccessibleBy(userID) {
-		// PaymentMethod belongs to another user — treat as not found to avoid leaking existence.
-		span.SetStatus(codes.Error, "not found")
-		return nil, apperrors.ErrNotFound
+	req.Name = name
+
+	if err := s.checkOwned(ctx, userID, id); err != nil {
+		recordOwnershipError(span, err)
+		return nil, err
 	}
 
 	// Prevent renaming to a name that collides with a global payment method.
@@ -131,9 +152,12 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdatePaymentMethod
 		return nil, err
 	}
 
+	// Renaming to its own name (changing only case or accents) does not conflict: the unique index
+	// compares with other rows.
 	pm, err := s.repo.Update(ctx, userID, id, req)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrConflict) {
+			err = s.ownNameConflict(ctx, userID, req.Name)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
@@ -146,16 +170,24 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdatePaymentMethod
 		return nil, apperrors.ErrNotFound
 	}
 
-	span.SetAttributes(attribute.String("payment_method.name", pm.Name))
 	return pm, nil
 }
 
-// Delete removes a personal payment method owned by the authenticated user.
-// Returns apperrors.ErrNotFound if the payment method does not exist or belongs to another user.
-// Returns apperrors.ErrForbidden if the payment method is global.
-// Returns apperrors.ErrConflict if the payment method is referenced by purchase entries.
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	ctx, span := otel.Tracer(tracerName).Start(ctx, "paymentMethodService.Delete")
+// Archive archives a personal payment method owned by the authenticated user. Idempotent.
+func (s *Service) Archive(ctx context.Context, id int64) error {
+	return s.setArchived(ctx, "paymentMethodService.Archive", id, true)
+}
+
+// Unarchive reactivates a personal payment method owned by the authenticated user. Idempotent.
+func (s *Service) Unarchive(ctx context.Context, id int64) error {
+	return s.setArchived(ctx, "paymentMethodService.Unarchive", id, false)
+}
+
+// setArchived is the shared flow of Archive and Unarchive.
+// Returns apperrors.ErrNotFound if the payment method does not exist or belongs to another user, and
+// apperrors.ErrForbidden if it is global.
+func (s *Service) setArchived(ctx context.Context, spanName string, id int64, archived bool) error {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
 	defer span.End()
 
 	userID, ok := identity.UserIDFromContext(ctx)
@@ -164,53 +196,76 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 	span.SetAttributes(attribute.Int64("payment_method.id", id))
 
-	// Verify existence and global status before attempting delete.
-	existing, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("paymentMethodService.Delete: %w", err)
-	}
-	if existing == nil {
-		span.SetStatus(codes.Error, "not found")
-		return apperrors.ErrNotFound
-	}
-	if existing.IsGlobal {
-		span.SetStatus(codes.Error, "forbidden: global payment method")
-		return apperrors.ErrForbidden
-	}
-	if !existing.AccessibleBy(userID) {
-		span.SetStatus(codes.Error, "not found")
-		return apperrors.ErrNotFound
+	if err := s.checkOwned(ctx, userID, id); err != nil {
+		recordOwnershipError(span, err)
+		return err
 	}
 
-	found, err := s.repo.Delete(ctx, userID, id)
+	found, err := s.repo.SetArchived(ctx, userID, id, archived)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrConflict) {
-			span.SetStatus(codes.Error, err.Error())
-			return err
-		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("paymentMethodService.Delete: %w", err)
+		return fmt.Errorf("%s: %w", spanName, err)
 	}
 	if !found {
 		span.SetStatus(codes.Error, "not found")
 		return apperrors.ErrNotFound
 	}
-
 	return nil
 }
 
-// checkGlobalNameCollision returns ErrConflict if a global payment method has the same
-// name (case-insensitive). Uniqueness among personal payment methods is enforced by the DB.
+// checkOwned verifies the payment method exists and is a personal one of userID.
+// Returns apperrors.ErrNotFound if it does not exist or belongs to another user (no existence leak),
+// and apperrors.ErrForbidden if it is global.
+func (s *Service) checkOwned(ctx context.Context, userID, id int64) error {
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("paymentMethodService.checkOwned: %w", err)
+	}
+	if existing == nil {
+		return apperrors.ErrNotFound
+	}
+	if existing.IsGlobal {
+		return apperrors.ErrForbidden
+	}
+	if !existing.AccessibleBy(userID) {
+		return apperrors.ErrNotFound
+	}
+	return nil
+}
+
+// recordOwnershipError marks the span for a checkOwned error; only unexpected errors are recorded as such.
+func recordOwnershipError(span trace.Span, err error) {
+	if !errors.Is(err, apperrors.ErrNotFound) && !errors.Is(err, apperrors.ErrForbidden) {
+		span.RecordError(err)
+	}
+	span.SetStatus(codes.Error, err.Error())
+}
+
+// checkGlobalNameCollision returns ErrDefaultNameConflict if a global payment method has the same name key
+// (case- and accent-insensitive). Uniqueness among personal payment methods is enforced by the DB.
+// It is check-then-act, tolerated because global payment methods only change through migrations.
 func (s *Service) checkGlobalNameCollision(ctx context.Context, name string) error {
 	exists, err := s.repo.ExistsGlobalByName(ctx, name)
 	if err != nil {
 		return fmt.Errorf("paymentMethodService.checkGlobalNameCollision: %w", err)
 	}
 	if exists {
-		return apperrors.ErrConflict
+		return ErrDefaultNameConflict
 	}
 	return nil
+}
+
+// ownNameConflict tells, after a unique violation on update, whether the other own payment method with the
+// same name is archived (ErrArchivedNameConflict) or active (ErrNameConflict). If that row is gone in
+// the meantime, it still answers ErrNameConflict.
+func (s *Service) ownNameConflict(ctx context.Context, userID int64, name string) error {
+	other, err := s.repo.FindOwnByName(ctx, userID, name)
+	if err != nil {
+		return fmt.Errorf("paymentMethodService.ownNameConflict: %w", err)
+	}
+	if other != nil && other.IsArchived() {
+		return ErrArchivedNameConflict
+	}
+	return ErrNameConflict
 }

@@ -10,6 +10,15 @@ type mockPurchaseRepository struct {
 	ListFn    func(ctx context.Context, filter ListFilter) (*PaginatedResult, error)
 	UpdateFn  func(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
 	DeleteFn  func(ctx context.Context, userID, id int64) (bool, error)
+
+	SummarizeFn func(ctx context.Context, userID int64, ranges SummaryRanges) (*SummarySums, error)
+}
+
+func (m *mockPurchaseRepository) Summarize(ctx context.Context, userID int64, ranges SummaryRanges) (*SummarySums, error) {
+	if m.SummarizeFn == nil {
+		return &SummarySums{}, nil
+	}
+	return m.SummarizeFn(ctx, userID, ranges)
 }
 
 func (m *mockPurchaseRepository) Create(ctx context.Context, userID int64, req *CreatePurchaseRequest) (*Purchase, error) {

@@ -5,16 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
 	"github.com/jonasjesusamerico/we-sync-api/internal/identity"
 )
 
 const tracerName = "we-sync-api/category"
+
+// maxNameRunes is the maximum name length, in characters (runes) after trimming; old names may be longer
+// and stay valid until edited (RN-12 of feature 006).
+const maxNameRunes = 40
 
 // Service implements the category business rules.
 type Service struct {
@@ -26,44 +32,83 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// Create validates and persists a new personal category for the authenticated user.
-func (s *Service) Create(ctx context.Context, req *CreateCategoryRequest) (*Category, error) {
+// validateInput checks name, icon and color in the contract order and returns the trimmed name or the
+// first validation error.
+func validateInput(name string, icon Icon, color Color) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", apperrors.NewValidationError("name is required")
+	}
+	if utf8.RuneCountInString(name) > maxNameRunes {
+		return "", apperrors.NewValidationError("name must be at most %d characters", maxNameRunes)
+	}
+	if icon == "" {
+		return "", apperrors.NewValidationError("icon is required")
+	}
+	if !icon.IsValid() {
+		return "", apperrors.NewValidationError(
+			"icon %q is not valid; allowed values: TAG, HEART, SMILE, BOOK, CAR, HOUSE, FOOD, CARD, GIFT, SPARKLE", icon)
+	}
+	if color == "" {
+		return "", apperrors.NewValidationError("color is required")
+	}
+	if !color.IsValid() {
+		return "", apperrors.NewValidationError(
+			"color %q is not valid; allowed values: FOOD, TRANSPORT, HOME, HEALTH, EDUCATION, LEISURE", color)
+	}
+	return name, nil
+}
+
+// Create validates and persists a new personal category for the authenticated user, or reactivates the
+// user's archived category with the same name. The bool is true when a category was created and false
+// when an archived one was reactivated.
+func (s *Service) Create(ctx context.Context, req *CreateCategoryRequest) (*Category, bool, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.Create")
 	defer span.End()
 
 	userID, ok := identity.UserIDFromContext(ctx)
 	if !ok {
-		return nil, apperrors.ErrUnauthorized
+		return nil, false, apperrors.ErrUnauthorized
 	}
-	if req == nil || strings.TrimSpace(req.Name) == "" {
+	if req == nil {
 		err := apperrors.NewValidationError("name is required")
 		span.SetStatus(codes.Error, err.Error())
-		return nil, err
+		return nil, false, err
 	}
-	req.Name = strings.TrimSpace(req.Name)
+	name, err := validateInput(req.Name, req.Icon, req.Color)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, false, err
+	}
+	req.Name = name
 
 	// Prevent creating a personal category with the same name as a global one.
 	if err := s.checkGlobalNameCollision(ctx, req.Name); err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 
-	c, err := s.repo.Create(ctx, userID, req)
+	c, inserted, err := s.repo.Create(ctx, userID, req)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrConflict) {
-			span.SetStatus(codes.Error, err.Error())
-			return nil, err
+			span.SetStatus(codes.Error, ErrNameConflict.Error())
+			return nil, false, ErrNameConflict
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("categoryService.Create: %w", err)
+		return nil, false, fmt.Errorf("categoryService.Create: %w", err)
+	}
+	if c == nil {
+		// An active own category already has this name.
+		span.SetStatus(codes.Error, ErrNameConflict.Error())
+		return nil, false, ErrNameConflict
 	}
 
-	span.SetAttributes(attribute.Int64("category.id", c.ID))
-	return c, nil
+	span.SetAttributes(attribute.Int64("category.id", c.ID), attribute.Bool("category.reactivated", !inserted))
+	return c, inserted, nil
 }
 
-// List returns all categories visible to the authenticated user.
+// List returns all categories visible to the authenticated user, archived ones included.
 func (s *Service) List(ctx context.Context) ([]Category, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.List")
 	defer span.End()
@@ -84,9 +129,11 @@ func (s *Service) List(ctx context.Context) ([]Category, error) {
 	return items, nil
 }
 
-// Update renames a personal category owned by the authenticated user.
-// Returns apperrors.ErrNotFound if the category does not exist or belongs to another user.
-// Returns apperrors.ErrForbidden if the category is global.
+// Update replaces the name, icon and color of a personal category (active or archived) owned by the
+// authenticated user.
+// Returns apperrors.ErrNotFound if the category does not exist or belongs to another user,
+// apperrors.ErrForbidden if it is global, and ErrDefaultNameConflict, ErrNameConflict or
+// ErrArchivedNameConflict when the name is taken.
 func (s *Service) Update(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.Update")
 	defer span.End()
@@ -97,32 +144,21 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdateCategoryReque
 	}
 	span.SetAttributes(attribute.Int64("category.id", id))
 
-	if req == nil || strings.TrimSpace(req.Name) == "" {
+	if req == nil {
 		err := apperrors.NewValidationError("name is required")
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	req.Name = strings.TrimSpace(req.Name)
-
-	// Verify the category exists and is not global before attempting the update.
-	existing, err := s.repo.GetByID(ctx, id)
+	name, err := validateInput(req.Name, req.Icon, req.Color)
 	if err != nil {
-		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("categoryService.Update: %w", err)
+		return nil, err
 	}
-	if existing == nil {
-		span.SetStatus(codes.Error, "not found")
-		return nil, apperrors.ErrNotFound
-	}
-	if existing.IsGlobal {
-		span.SetStatus(codes.Error, "forbidden: global category")
-		return nil, apperrors.ErrForbidden
-	}
-	if !existing.AccessibleBy(userID) {
-		// Category belongs to another user — treat as not found to avoid leaking existence.
-		span.SetStatus(codes.Error, "not found")
-		return nil, apperrors.ErrNotFound
+	req.Name = name
+
+	if err := s.checkOwned(ctx, userID, id); err != nil {
+		recordOwnershipError(span, err)
+		return nil, err
 	}
 
 	// Prevent renaming to a name that collides with a global category.
@@ -131,9 +167,12 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdateCategoryReque
 		return nil, err
 	}
 
+	// Renaming to its own name (changing only case or accents) does not conflict: the unique index
+	// compares with other rows.
 	c, err := s.repo.Update(ctx, userID, id, req)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrConflict) {
+			err = s.ownNameConflict(ctx, userID, req.Name)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
@@ -146,16 +185,24 @@ func (s *Service) Update(ctx context.Context, id int64, req *UpdateCategoryReque
 		return nil, apperrors.ErrNotFound
 	}
 
-	span.SetAttributes(attribute.String("category.name", c.Name))
 	return c, nil
 }
 
-// Delete removes a personal category owned by the authenticated user.
-// Returns apperrors.ErrNotFound if the category does not exist or belongs to another user.
-// Returns apperrors.ErrForbidden if the category is global.
-// Returns apperrors.ErrConflict if the category is referenced by purchase entries.
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	ctx, span := otel.Tracer(tracerName).Start(ctx, "categoryService.Delete")
+// Archive archives a personal category owned by the authenticated user. Idempotent.
+func (s *Service) Archive(ctx context.Context, id int64) error {
+	return s.setArchived(ctx, "categoryService.Archive", id, true)
+}
+
+// Unarchive reactivates a personal category owned by the authenticated user. Idempotent.
+func (s *Service) Unarchive(ctx context.Context, id int64) error {
+	return s.setArchived(ctx, "categoryService.Unarchive", id, false)
+}
+
+// setArchived is the shared flow of Archive and Unarchive.
+// Returns apperrors.ErrNotFound if the category does not exist or belongs to another user, and
+// apperrors.ErrForbidden if it is global.
+func (s *Service) setArchived(ctx context.Context, spanName string, id int64, archived bool) error {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
 	defer span.End()
 
 	userID, ok := identity.UserIDFromContext(ctx)
@@ -164,53 +211,76 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 	span.SetAttributes(attribute.Int64("category.id", id))
 
-	// Verify existence and global status before attempting delete.
-	existing, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("categoryService.Delete: %w", err)
-	}
-	if existing == nil {
-		span.SetStatus(codes.Error, "not found")
-		return apperrors.ErrNotFound
-	}
-	if existing.IsGlobal {
-		span.SetStatus(codes.Error, "forbidden: global category")
-		return apperrors.ErrForbidden
-	}
-	if !existing.AccessibleBy(userID) {
-		span.SetStatus(codes.Error, "not found")
-		return apperrors.ErrNotFound
+	if err := s.checkOwned(ctx, userID, id); err != nil {
+		recordOwnershipError(span, err)
+		return err
 	}
 
-	found, err := s.repo.Delete(ctx, userID, id)
+	found, err := s.repo.SetArchived(ctx, userID, id, archived)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrConflict) {
-			span.SetStatus(codes.Error, err.Error())
-			return err
-		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("categoryService.Delete: %w", err)
+		return fmt.Errorf("%s: %w", spanName, err)
 	}
 	if !found {
 		span.SetStatus(codes.Error, "not found")
 		return apperrors.ErrNotFound
 	}
-
 	return nil
 }
 
-// checkGlobalNameCollision returns ErrConflict if a global category has the same
-// name (case-insensitive). Uniqueness among personal categories is enforced by the DB.
+// checkOwned verifies the category exists and is a personal one of userID.
+// Returns apperrors.ErrNotFound if it does not exist or belongs to another user (no existence leak),
+// and apperrors.ErrForbidden if it is global.
+func (s *Service) checkOwned(ctx context.Context, userID, id int64) error {
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("categoryService.checkOwned: %w", err)
+	}
+	if existing == nil {
+		return apperrors.ErrNotFound
+	}
+	if existing.IsGlobal {
+		return apperrors.ErrForbidden
+	}
+	if !existing.AccessibleBy(userID) {
+		return apperrors.ErrNotFound
+	}
+	return nil
+}
+
+// recordOwnershipError marks the span for a checkOwned error; only unexpected errors are recorded as such.
+func recordOwnershipError(span trace.Span, err error) {
+	if !errors.Is(err, apperrors.ErrNotFound) && !errors.Is(err, apperrors.ErrForbidden) {
+		span.RecordError(err)
+	}
+	span.SetStatus(codes.Error, err.Error())
+}
+
+// checkGlobalNameCollision returns ErrDefaultNameConflict if a global category has the same name key
+// (case- and accent-insensitive). Uniqueness among personal categories is enforced by the DB.
+// It is check-then-act, tolerated because global categories only change through migrations.
 func (s *Service) checkGlobalNameCollision(ctx context.Context, name string) error {
 	exists, err := s.repo.ExistsGlobalByName(ctx, name)
 	if err != nil {
 		return fmt.Errorf("categoryService.checkGlobalNameCollision: %w", err)
 	}
 	if exists {
-		return apperrors.ErrConflict
+		return ErrDefaultNameConflict
 	}
 	return nil
+}
+
+// ownNameConflict tells, after a unique violation on update, whether the other own category with the
+// same name is archived (ErrArchivedNameConflict) or active (ErrNameConflict). If that row is gone in
+// the meantime, it still answers ErrNameConflict.
+func (s *Service) ownNameConflict(ctx context.Context, userID int64, name string) error {
+	other, err := s.repo.FindOwnByName(ctx, userID, name)
+	if err != nil {
+		return fmt.Errorf("categoryService.ownNameConflict: %w", err)
+	}
+	if other != nil && other.IsArchived() {
+		return ErrArchivedNameConflict
+	}
+	return ErrNameConflict
 }

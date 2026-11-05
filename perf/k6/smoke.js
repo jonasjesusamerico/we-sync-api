@@ -32,8 +32,9 @@ export default function (data) {
     check(items, { [`${resource} include globals`]: (list) => list && list.some((it) => it.is_global) });
     const own = api.createOwned(token, resource, `k6 ${resource} ${Date.now()}`);
     if (own) {
-      api.updateOwned(token, resource, own.id, `k6 ${resource} renamed ${Date.now()}`);
-      api.deleteOwned(token, resource, own.id);
+      // Names stay within the 40-character limit: "k6 payment-methods edit <ms>" has 37.
+      api.updateOwned(token, resource, own.id, `k6 ${resource} edit ${Date.now()}`);
+      api.archiveOwned(token, resource, own.id);
     }
   }
 

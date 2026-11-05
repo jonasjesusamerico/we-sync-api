@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jonasjesusamerico/we-sync-api/internal/apperrors"
@@ -21,15 +21,16 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockCategoryService struct {
-	CreateFn func(ctx context.Context, req *CreateCategoryRequest) (*Category, error)
-	ListFn   func(ctx context.Context) ([]Category, error)
-	UpdateFn func(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error)
-	DeleteFn func(ctx context.Context, id int64) error
+	CreateFn    func(ctx context.Context, req *CreateCategoryRequest) (*Category, bool, error)
+	ListFn      func(ctx context.Context) ([]Category, error)
+	UpdateFn    func(ctx context.Context, id int64, req *UpdateCategoryRequest) (*Category, error)
+	ArchiveFn   func(ctx context.Context, id int64) error
+	UnarchiveFn func(ctx context.Context, id int64) error
 }
 
-func (m *mockCategoryService) Create(ctx context.Context, req *CreateCategoryRequest) (*Category, error) {
+func (m *mockCategoryService) Create(ctx context.Context, req *CreateCategoryRequest) (*Category, bool, error) {
 	if m.CreateFn == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	return m.CreateFn(ctx, req)
 }
@@ -45,22 +46,31 @@ func (m *mockCategoryService) Update(ctx context.Context, id int64, req *UpdateC
 	}
 	return m.UpdateFn(ctx, id, req)
 }
-func (m *mockCategoryService) Delete(ctx context.Context, id int64) error {
-	if m.DeleteFn == nil {
+func (m *mockCategoryService) Archive(ctx context.Context, id int64) error {
+	if m.ArchiveFn == nil {
 		return nil
 	}
-	return m.DeleteFn(ctx, id)
+	return m.ArchiveFn(ctx, id)
+}
+func (m *mockCategoryService) Unarchive(ctx context.Context, id int64) error {
+	if m.UnarchiveFn == nil {
+		return nil
+	}
+	return m.UnarchiveFn(ctx, id)
 }
 
 func sampleCategory() *Category {
 	uid := int64(42)
 	return &Category{
-		ID:        1,
-		UserID:    &uid,
-		Name:      "Gasolina",
-		IsGlobal:  false,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:         1,
+		UserID:     &uid,
+		Name:       "Pets",
+		IsGlobal:   false,
+		Icon:       IconHeart,
+		Color:      ColorLeisure,
+		ArchivedAt: nil,
+		CreatedAt:  fixedTime,
+		UpdatedAt:  fixedTime,
 	}
 }
 
@@ -79,37 +89,70 @@ func decodeError(t *testing.T, body *bytes.Buffer) httputil.APIError {
 	return apiErr
 }
 
+const petsBody = `{"name":"Pets","icon":"HEART","color":"LEISURE"}`
+
 // ---------------------------------------------------------------------------
 // Create
 // ---------------------------------------------------------------------------
 
-func TestHandler_Create_Success(t *testing.T) {
+func TestHandler_Create_Created(t *testing.T) {
+	var got CreateCategoryRequest
 	h := NewHandler(&mockCategoryService{
-		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
-			return sampleCategory(), nil
+		CreateFn: func(_ context.Context, req *CreateCategoryRequest) (*Category, bool, error) {
+			got = *req
+			return sampleCategory(), true, nil
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(`{"name":"Gasolina"}`))
+	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(petsBody))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
 	h.Create(rec, req)
 
 	if rec.Code != http.StatusCreated {
-		t.Errorf("expected 201, got %d", rec.Code)
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	if got != (CreateCategoryRequest{Name: "Pets", Icon: IconHeart, Color: ColorLeisure}) {
+		t.Fatalf("service received %+v", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"icon":"HEART"`, `"color":"LEISURE"`, `"archived_at":null`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body %s does not contain %s", body, want)
+		}
+	}
+}
+
+func TestHandler_Create_Reactivated(t *testing.T) {
+	h := NewHandler(&mockCategoryService{
+		CreateFn: func(context.Context, *CreateCategoryRequest) (*Category, bool, error) {
+			return sampleCategory(), false, nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(petsBody)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var got Category
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if got.ID != 1 {
-		t.Errorf("expected ID=1, got %d", got.ID)
+	if got.ID != 1 || got.ArchivedAt != nil {
+		t.Fatalf("got %+v", got)
 	}
 }
 
 func TestHandler_Create_InvalidJSON(t *testing.T) {
-	h := NewHandler(&mockCategoryService{})
+	h := NewHandler(&mockCategoryService{
+		CreateFn: func(context.Context, *CreateCategoryRequest) (*Category, bool, error) {
+			t.Fatal("service must not be called")
+			return nil, false, nil
+		},
+	})
 
 	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(`{bad}`))
 	rec := httptest.NewRecorder()
@@ -120,80 +163,8 @@ func TestHandler_Create_InvalidJSON(t *testing.T) {
 		t.Errorf("expected 400, got %d", rec.Code)
 	}
 	apiErr := decodeError(t, rec.Body)
-	if apiErr.Code != httputil.ErrCodeBadRequest {
-		t.Errorf("expected code %q, got %q", httputil.ErrCodeBadRequest, apiErr.Code)
-	}
-}
-
-func TestHandler_Create_ValidationError(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
-			return nil, apperrors.NewValidationError("name is required")
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(`{"name":""}`))
-	rec := httptest.NewRecorder()
-
-	h.Create(rec, req)
-
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("expected 422, got %d", rec.Code)
-	}
-}
-
-func TestHandler_Create_Conflict(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
-			return nil, apperrors.ErrConflict
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(`{"name":"Alimentação"}`))
-	rec := httptest.NewRecorder()
-
-	h.Create(rec, req)
-
-	if rec.Code != http.StatusConflict {
-		t.Errorf("expected 409, got %d", rec.Code)
-	}
-	apiErr := decodeError(t, rec.Body)
-	if apiErr.Code != httputil.ErrCodeConflict {
-		t.Errorf("expected code %q, got %q", httputil.ErrCodeConflict, apiErr.Code)
-	}
-}
-
-func TestHandler_Create_Unauthorized(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
-			return nil, apperrors.ErrUnauthorized
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(`{"name":"X"}`))
-	rec := httptest.NewRecorder()
-
-	h.Create(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", rec.Code)
-	}
-}
-
-func TestHandler_Create_InternalError(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		CreateFn: func(_ context.Context, _ *CreateCategoryRequest) (*Category, error) {
-			return nil, errors.New("db unavailable")
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(`{"name":"X"}`))
-	rec := httptest.NewRecorder()
-
-	h.Create(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
+	if apiErr.Code != httputil.ErrCodeBadRequest || apiErr.Message != "invalid request body" {
+		t.Errorf("got %+v", apiErr)
 	}
 }
 
@@ -226,19 +197,13 @@ func TestHandler_List_Success(t *testing.T) {
 }
 
 func TestHandler_List_Empty(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		ListFn: func(_ context.Context) ([]Category, error) {
-			return []Category{}, nil
-		},
-	})
+	h := NewHandler(&mockCategoryService{})
 
-	req := httptest.NewRequest(http.MethodGet, "/categories", nil)
 	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/categories", nil))
 
-	h.List(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("expected 200 with [], got %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -249,10 +214,8 @@ func TestHandler_List_InternalError(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/categories", nil)
 	rec := httptest.NewRecorder()
-
-	h.List(rec, req)
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/categories", nil))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", rec.Code)
@@ -264,83 +227,47 @@ func TestHandler_List_InternalError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandler_Update_Success(t *testing.T) {
+	var gotID int64
+	var got UpdateCategoryRequest
 	h := NewHandler(&mockCategoryService{
-		UpdateFn: func(_ context.Context, _ int64, _ *UpdateCategoryRequest) (*Category, error) {
+		UpdateFn: func(_ context.Context, id int64, req *UpdateCategoryRequest) (*Category, error) {
+			gotID, got = id, *req
 			return sampleCategory(), nil
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPut, "/categories/1", strings.NewReader(`{"name":"Novo"}`))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPut, "/categories/1",
+		strings.NewReader(`{"name":"Animais","icon":"HOUSE","color":"HOME"}`))
 	req = withChiID(req, "1")
 	rec := httptest.NewRecorder()
 
 	h.Update(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if gotID != 1 || got != (UpdateCategoryRequest{Name: "Animais", Icon: IconHouse, Color: ColorHome}) {
+		t.Fatalf("service received id=%d req=%+v", gotID, got)
 	}
 }
 
 func TestHandler_Update_InvalidID(t *testing.T) {
 	h := NewHandler(&mockCategoryService{})
 
-	req := httptest.NewRequest(http.MethodPut, "/categories/abc", strings.NewReader(`{"name":"X"}`))
-	req = withChiID(req, "abc")
+	req := withChiID(httptest.NewRequest(http.MethodPut, "/categories/abc", strings.NewReader(petsBody)), "abc")
 	rec := httptest.NewRecorder()
 
 	h.Update(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
-	}
-}
-
-func TestHandler_Update_NotFound(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		UpdateFn: func(_ context.Context, _ int64, _ *UpdateCategoryRequest) (*Category, error) {
-			return nil, apperrors.ErrNotFound
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodPut, "/categories/99", strings.NewReader(`{"name":"X"}`))
-	req = withChiID(req, "99")
-	rec := httptest.NewRecorder()
-
-	h.Update(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
-	}
-}
-
-func TestHandler_Update_ForbiddenGlobal(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		UpdateFn: func(_ context.Context, _ int64, _ *UpdateCategoryRequest) (*Category, error) {
-			return nil, apperrors.ErrForbidden
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodPut, "/categories/1", strings.NewReader(`{"name":"X"}`))
-	req = withChiID(req, "1")
-	rec := httptest.NewRecorder()
-
-	h.Update(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", rec.Code)
-	}
-	apiErr := decodeError(t, rec.Body)
-	if apiErr.Code != httputil.ErrCodeForbidden {
-		t.Errorf("expected code %q, got %q", httputil.ErrCodeForbidden, apiErr.Code)
 	}
 }
 
 func TestHandler_Update_InvalidJSON(t *testing.T) {
 	h := NewHandler(&mockCategoryService{})
 
-	req := httptest.NewRequest(http.MethodPut, "/categories/1", strings.NewReader(`{bad}`))
-	req = withChiID(req, "1")
+	req := withChiID(httptest.NewRequest(http.MethodPut, "/categories/1", strings.NewReader(`{bad}`)), "1")
 	rec := httptest.NewRecorder()
 
 	h.Update(rec, req)
@@ -351,87 +278,120 @@ func TestHandler_Update_InvalidJSON(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Delete
+// Archive / Unarchive
 // ---------------------------------------------------------------------------
 
-func TestHandler_Delete_Success(t *testing.T) {
+func TestHandler_Archive_Success(t *testing.T) {
+	var gotID int64
 	h := NewHandler(&mockCategoryService{
-		DeleteFn: func(_ context.Context, _ int64) error { return nil },
+		ArchiveFn: func(_ context.Context, id int64) error { gotID = id; return nil },
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/categories/1", nil)
-	req = withChiID(req, "1")
 	rec := httptest.NewRecorder()
+	h.Archive(rec, withChiID(httptest.NewRequest(http.MethodPut, "/categories/5/archive", nil), "5"))
 
-	h.Delete(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("expected 204, got %d", rec.Code)
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("expected 204 with an empty body, got %d %q", rec.Code, rec.Body.String())
+	}
+	if gotID != 5 {
+		t.Fatalf("service received id %d, want 5", gotID)
 	}
 }
 
-func TestHandler_Delete_NotFound(t *testing.T) {
+func TestHandler_Unarchive_Success(t *testing.T) {
+	var gotID int64
 	h := NewHandler(&mockCategoryService{
-		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrNotFound },
+		UnarchiveFn: func(_ context.Context, id int64) error { gotID = id; return nil },
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/categories/99", nil)
-	req = withChiID(req, "99")
 	rec := httptest.NewRecorder()
+	h.Unarchive(rec, withChiID(httptest.NewRequest(http.MethodDelete, "/categories/5/archive", nil), "5"))
 
-	h.Delete(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("expected 204 with an empty body, got %d %q", rec.Code, rec.Body.String())
+	}
+	if gotID != 5 {
+		t.Fatalf("service received id %d, want 5", gotID)
 	}
 }
 
-func TestHandler_Delete_ForbiddenGlobal(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrForbidden },
-	})
-
-	req := httptest.NewRequest(http.MethodDelete, "/categories/1", nil)
-	req = withChiID(req, "1")
-	rec := httptest.NewRecorder()
-
-	h.Delete(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", rec.Code)
+func TestHandler_Archive_InvalidID(t *testing.T) {
+	fail := func(context.Context, int64) error {
+		t.Fatal("service must not be called")
+		return nil
+	}
+	h := NewHandler(&mockCategoryService{ArchiveFn: fail, UnarchiveFn: fail})
+	for _, id := range []string{"0", "abc"} {
+		for _, op := range []http.HandlerFunc{h.Archive, h.Unarchive} {
+			rec := httptest.NewRecorder()
+			op(rec, withChiID(httptest.NewRequest(http.MethodPut, "/categories/"+id+"/archive", nil), id))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("id %q: expected 400, got %d", id, rec.Code)
+			}
+			if apiErr := decodeError(t, rec.Body); apiErr.Message != "id must be a positive integer" {
+				t.Fatalf("id %q: message = %q", id, apiErr.Message)
+			}
+		}
 	}
 }
 
-func TestHandler_Delete_ConflictInUse(t *testing.T) {
-	h := NewHandler(&mockCategoryService{
-		DeleteFn: func(_ context.Context, _ int64) error { return apperrors.ErrConflict },
-	})
+// ---------------------------------------------------------------------------
+// error mapping
+// ---------------------------------------------------------------------------
 
-	req := httptest.NewRequest(http.MethodDelete, "/categories/1", nil)
-	req = withChiID(req, "1")
-	rec := httptest.NewRecorder()
-
-	h.Delete(rec, req)
-
-	if rec.Code != http.StatusConflict {
-		t.Errorf("expected 409, got %d", rec.Code)
+func TestHandler_Errors(t *testing.T) {
+	errs := []struct {
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{apperrors.ErrUnauthorized, http.StatusUnauthorized, httputil.ErrCodeUnauthorized, "authentication required"},
+		{apperrors.ErrForbidden, http.StatusForbidden, httputil.ErrCodeForbidden, "default categories cannot be changed"},
+		{apperrors.ErrNotFound, http.StatusNotFound, httputil.ErrCodeNotFound, "category not found"},
+		{ErrDefaultNameConflict, http.StatusConflict, httputil.ErrCodeDefaultNameConflict, "name already used by a default category"},
+		{ErrArchivedNameConflict, http.StatusConflict, httputil.ErrCodeArchivedNameConflict, "name already used by an archived category"},
+		{ErrNameConflict, http.StatusConflict, httputil.ErrCodeNameConflict, "name already used by another category"},
+		{apperrors.ErrConflict, http.StatusConflict, httputil.ErrCodeNameConflict, "name already used by another category"},
+		{apperrors.NewValidationError("name is required"), http.StatusUnprocessableEntity, httputil.ErrCodeValidation, "name is required"},
+		{errors.New("db unavailable"), http.StatusInternalServerError, httputil.ErrCodeInternalServerError, "internal server error"},
 	}
-	apiErr := decodeError(t, rec.Body)
-	if apiErr.Code != httputil.ErrCodeConflict {
-		t.Errorf("expected code %q, got %q", httputil.ErrCodeConflict, apiErr.Code)
-	}
-}
-
-func TestHandler_Delete_InvalidID(t *testing.T) {
-	h := NewHandler(&mockCategoryService{})
-
-	req := httptest.NewRequest(http.MethodDelete, "/categories/0", nil)
-	req = withChiID(req, "0")
-	rec := httptest.NewRecorder()
-
-	h.Delete(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
+	for _, e := range errs {
+		h := NewHandler(&mockCategoryService{
+			CreateFn:    func(context.Context, *CreateCategoryRequest) (*Category, bool, error) { return nil, false, e.err },
+			UpdateFn:    func(context.Context, int64, *UpdateCategoryRequest) (*Category, error) { return nil, e.err },
+			ArchiveFn:   func(context.Context, int64) error { return e.err },
+			UnarchiveFn: func(context.Context, int64) error { return e.err },
+		})
+		ops := []struct {
+			name string
+			call func(*httptest.ResponseRecorder)
+		}{
+			{"Create", func(rec *httptest.ResponseRecorder) {
+				h.Create(rec, httptest.NewRequest(http.MethodPost, "/categories", strings.NewReader(petsBody)))
+			}},
+			{"Update", func(rec *httptest.ResponseRecorder) {
+				h.Update(rec, withChiID(httptest.NewRequest(http.MethodPut, "/categories/1", strings.NewReader(petsBody)), "1"))
+			}},
+			{"Archive", func(rec *httptest.ResponseRecorder) {
+				h.Archive(rec, withChiID(httptest.NewRequest(http.MethodPut, "/categories/1/archive", nil), "1"))
+			}},
+			{"Unarchive", func(rec *httptest.ResponseRecorder) {
+				h.Unarchive(rec, withChiID(httptest.NewRequest(http.MethodDelete, "/categories/1/archive", nil), "1"))
+			}},
+		}
+		for _, op := range ops {
+			t.Run(fmt.Sprintf("%s/%v", op.name, e.err), func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				op.call(rec)
+				if rec.Code != e.status {
+					t.Fatalf("status = %d, want %d", rec.Code, e.status)
+				}
+				apiErr := decodeError(t, rec.Body)
+				if apiErr.Code != e.code || apiErr.Message != e.message {
+					t.Fatalf("got %+v, want {%s %s}", apiErr, e.code, e.message)
+				}
+			})
+		}
 	}
 }

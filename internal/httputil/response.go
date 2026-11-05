@@ -18,13 +18,26 @@ type APIError struct {
 
 // Common error codes used across the API.
 const (
-	ErrCodeBadRequest          = "BAD_REQUEST"
-	ErrCodeValidation          = "VALIDATION_ERROR"
-	ErrCodeNotFound            = "NOT_FOUND"
-	ErrCodeUnauthorized        = "UNAUTHORIZED"
-	ErrCodeForbidden           = "FORBIDDEN"
-	ErrCodeConflict            = "CONFLICT"
-	ErrCodeInternalServerError = "INTERNAL_SERVER_ERROR"
+	ErrCodeBadRequest = "BAD_REQUEST"
+	ErrCodeValidation = "VALIDATION_ERROR"
+	ErrCodeNotFound   = "NOT_FOUND"
+	// Not-found codes for references in a request body (purchase create/update): they tell the client which
+	// referenced resource is missing. The HTTP status is still 404, and "belongs to another user" answers the
+	// same as "does not exist".
+	ErrCodeCategoryNotFound      = "CATEGORY_NOT_FOUND"
+	ErrCodePaymentMethodNotFound = "PAYMENT_METHOD_NOT_FOUND"
+	ErrCodeUnauthorized          = "UNAUTHORIZED"
+	ErrCodeForbidden             = "FORBIDDEN"
+	ErrCodeConflict              = "CONFLICT"
+	// INVALID_PASSWORD (403): the password sent to confirm an authenticated operation (password change,
+	// account deletion) does not match. Never 401: the client would take it for an expired session.
+	ErrCodeInvalidPassword = "INVALID_PASSWORD"
+	// Name conflicts of categories and payment methods (409), one code per case so the client picks the message:
+	// the name equals a default one, an own active one, or (on update) an own archived one.
+	ErrCodeDefaultNameConflict  = "DEFAULT_NAME_CONFLICT"
+	ErrCodeNameConflict         = "NAME_CONFLICT"
+	ErrCodeArchivedNameConflict = "ARCHIVED_NAME_CONFLICT"
+	ErrCodeInternalServerError  = "INTERNAL_SERVER_ERROR"
 )
 
 // WriteJSON encodes v as JSON and writes it to w with the given HTTP status code.
