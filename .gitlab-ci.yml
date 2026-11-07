@@ -1,5 +1,8 @@
 image: golang:1.26
 
+default:
+  interruptible: true
+
 stages:
   - lint
   - test
@@ -25,7 +28,8 @@ workflow:
 format:
   stage: lint
   script:
-    - test -z "$(gofmt -l $(git ls-files '*.go'))" || (gofmt -l . && echo "Arquivos sem gofmt" && exit 1)
+    - UNFORMATTED=$(gofmt -l $(git ls-files '*.go'))
+    - if [ -n "$UNFORMATTED" ]; then echo "Arquivos sem gofmt:"; echo "$UNFORMATTED"; exit 1; fi
 
 vet:
   stage: lint
