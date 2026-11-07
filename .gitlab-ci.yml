@@ -1,0 +1,56 @@
+image: golang:1.26
+
+stages:
+  - lint
+  - test
+  - build
+
+variables:
+  GOPATH: $CI_PROJECT_DIR/.go
+  GOFLAGS: -mod=readonly
+
+cache:
+  key:
+    files:
+      - go.sum
+  paths:
+    - .go/pkg/mod/
+
+# Roda em push na master e em merge requests
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+format:
+  stage: lint
+  script:
+    - test -z "$(gofmt -l $(git ls-files '*.go'))" || (gofmt -l . && echo "Arquivos sem gofmt" && exit 1)
+
+vet:
+  stage: lint
+  script:
+    - go vet ./...
+
+golangci-lint:
+  stage: lint
+  image: golangci/golangci-lint:latest
+  script:
+    - golangci-lint run ./...
+  allow_failure: true
+
+test:
+  stage: test
+  script:
+    - go test -race -coverprofile=coverage.out ./...
+    - go tool cover -func=coverage.out | tail -1
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+
+build:
+  stage: build
+  script:
+    - go build -o bin/app ./...
+  artifacts:
+    paths:
+      - bin/
+    expire_in: 1 week
