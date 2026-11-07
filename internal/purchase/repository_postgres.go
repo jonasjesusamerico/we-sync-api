@@ -251,7 +251,7 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("purchasePostgresRepository.List query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []Purchase{}
 	for rows.Next() {

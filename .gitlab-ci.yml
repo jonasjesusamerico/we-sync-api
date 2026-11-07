@@ -53,7 +53,7 @@ test:
 build:
   stage: build
   script:
-    - go build -o bin/app ./...
+    - go build -o bin/app ./cmd/api
   artifacts:
     paths:
       - bin/

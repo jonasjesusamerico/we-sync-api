@@ -46,7 +46,7 @@ const dateLayout = "2006-01-02"
 
 // MarshalJSON encodes the date as "YYYY-MM-DD".
 func (d Date) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.Time.Format(dateLayout))
+	return json.Marshal(d.Format(dateLayout))
 }
 
 // UnmarshalJSON decodes a "YYYY-MM-DD" string into Date.

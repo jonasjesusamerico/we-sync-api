@@ -54,9 +54,9 @@ func JWTWithConfig(secret []byte, issuer, audience string, maxTTL time.Duration,
 			}
 			now := time.Now()
 			if claims.IssuedAt == nil || claims.ExpiresAt == nil ||
-				claims.ExpiresAt.Time.Before(now) || !claims.ExpiresAt.Time.After(claims.IssuedAt.Time) ||
-				claims.IssuedAt.Time.After(now.Add(time.Minute)) ||
-				(maxTTL > 0 && claims.ExpiresAt.Time.After(claims.IssuedAt.Time.Add(maxTTL))) {
+				claims.ExpiresAt.Before(now) || !claims.ExpiresAt.After(claims.IssuedAt.Time) ||
+				claims.IssuedAt.After(now.Add(time.Minute)) ||
+				(maxTTL > 0 && claims.ExpiresAt.After(claims.IssuedAt.Add(maxTTL))) {
 				httputil.WriteUnauthorized(w, "invalid authentication token")
 				return
 			}

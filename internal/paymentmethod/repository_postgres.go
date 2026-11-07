@@ -177,7 +177,7 @@ func (r *PostgresRepository) ListForUser(ctx context.Context, userID int64) ([]P
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("paymentMethodPostgresRepository.ListForUser: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []PaymentMethod{}
 	for rows.Next() {

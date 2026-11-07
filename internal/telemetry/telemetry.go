@@ -148,7 +148,7 @@ func newMeterProvider(ctx context.Context, cfg Config, res *resource.Resource) (
 	// Prometheus exporter is always active (pull model, no endpoint required).
 	promExp, err := prometheus.New()
 	if err != nil {
-		return nil, fmt.Errorf("Prometheus exporter: %w", err)
+		return nil, fmt.Errorf("prometheus exporter: %w", err)
 	}
 	readers := []sdkmetric.Option{
 		sdkmetric.WithResource(res),

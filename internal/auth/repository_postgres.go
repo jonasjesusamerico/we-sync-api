@@ -217,7 +217,7 @@ func (r *PostgresRepository) ChangePassword(ctx context.Context, userID int64, o
 		return 0, false, fmt.Errorf("authPostgresRepository.ChangePassword begin: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var version int64
 	err = tx.QueryRowContext(ctx, updateUserQuery, userID, oldHash, newHash).Scan(&version)
@@ -443,7 +443,7 @@ func (r *PostgresRepository) RotateRefreshToken(ctx context.Context, oldID, user
 		return fmt.Errorf("authPostgresRepository.RotateRefreshToken begin: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx, revokeQuery, oldID, userID)
 	if err != nil {
