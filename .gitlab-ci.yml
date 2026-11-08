@@ -77,7 +77,8 @@ workflow:
         fi
         git fetch --quiet --tags --force origin
         if [ -n "$(git tag -l "v$version")" ]; then echo "Tag v$version already exists"; return 1; fi
-        last=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+        # '|| true': with no tag yet grep finds nothing, and the runner's 'set -eo pipefail' would end the job here.
+        last=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
         if [ -z "$last" ]; then
           if [ "$kind" = hotfix ]; then echo "No version released yet: use release/X.Y.Z"; return 1; fi
           echo "First version: v$version"; return 0
@@ -267,7 +268,7 @@ release-tag:
       fi
       VERSION="${SOURCE#*/}"
       PREVIOUS=$(git describe --tags --abbrev=0 --match 'v*' HEAD^1 2>/dev/null || true)
-      NOTES=$(git log --no-merges --format='- %s' ${PREVIOUS:+$PREVIOUS..}HEAD^2 | head -200)
+      NOTES=$(git log --no-merges --format='- %s' ${PREVIOUS:+$PREVIOUS..}HEAD^2 | head -200 || true)
       API="$CI_API_V4_URL/projects/$CI_PROJECT_ID"
       api() { curl --silent --show-error --fail-with-body --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$@"; }
 
