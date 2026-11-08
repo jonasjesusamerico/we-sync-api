@@ -95,9 +95,11 @@ workflow:
             echo "Release $version must be greater than the last version ($last)"; return 1
           fi
         fi
-        # Otherwise a fix released in the meantime (hotfix) would be lost in production.
-        if ! git merge-base --is-ancestor "$last" HEAD; then
-          echo "$branch does not contain $last: merge master into it first"; return 1
+        # Otherwise a fix released in the meantime (hotfix) would be lost in production. Checks content, not
+        # history: merging $last into HEAD must change nothing, so a squashed merge from master also counts.
+        merged=$(git merge-tree --write-tree HEAD "$last" 2>/dev/null | head -1 || true)
+        if [ "$merged" != "$(git rev-parse 'HEAD^{tree}')" ]; then
+          echo "$branch does not contain the changes of $last: merge master into it first"; return 1
         fi
         echo "Version $version OK (last: $last)"
       }
@@ -117,8 +119,8 @@ check-version:
     - !reference [.check-version-fn, script]
     - check_version "$CI_COMMIT_BRANCH"
 
-# Master only receives release/hotfix branches, merged without squash, so master and develop keep
-# sharing history and the merge commit names the version.
+# Master only receives release/hotfix branches (the merge commit names the version). Squash or not does
+# not matter: version checks compare content, and the merge commit is created either way.
 mr-to-master:
   stage: lint
   cache: []
@@ -129,10 +131,6 @@ mr-to-master:
   script:
     - !reference [.check-version-fn, script]
     - check_version "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
-    - |
-      if [ "$CI_MERGE_REQUEST_SQUASH_ON_MERGE" = "true" ]; then
-        echo "Uncheck 'Squash commits' in this MR and run the pipeline again"; exit 1
-      fi
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -249,7 +247,7 @@ image-homolog:
 # ---------------------------------------------------------------------------
 
 # Reads X.Y.Z from the merged branch, creates tag vX.Y.Z (which starts the production pipeline), the
-# GitLab release, and the MR that brings master back into develop.
+# GitLab release, and the MR that brings master back into develop (merged by itself when green).
 # Needs GITLAB_TOKEN (project access token, role Maintainer, scope api only: it calls the API, never git push).
 release-tag:
   stage: release
@@ -280,12 +278,27 @@ release-tag:
         --data-urlencode "tag_name=v$VERSION" --data-urlencode "name=v$VERSION" \
         --data-urlencode "description=${NOTES:-No changes listed}" >/dev/null
       echo "Created release v$VERSION"
-      # 409 = an open MR master → develop already exists: it will carry this merge too.
-      api --request POST "$API/merge_requests" \
+      # Brings master back into develop: opens the MR (or reuses the open one) and sets it to merge by itself
+      # when its pipeline passes, without squash. Conflicts or a red pipeline leave it open for a person.
+      MR_JSON=$(api --request POST "$API/merge_requests" \
         --data-urlencode "source_branch=$CI_DEFAULT_BRANCH" --data-urlencode "target_branch=develop" \
-        --data-urlencode "title=chore: bring v$VERSION back into develop" >/dev/null \
-        && echo "Opened MR $CI_DEFAULT_BRANCH → develop" \
-        || echo "MR $CI_DEFAULT_BRANCH → develop not opened (it may already exist): check it by hand"
+        --data-urlencode "title=chore: bring v$VERSION back into develop" \
+        --data-urlencode "squash=false" --data-urlencode "remove_source_branch=false" 2>/dev/null \
+        || api "$API/merge_requests?state=opened&source_branch=$CI_DEFAULT_BRANCH&target_branch=develop" || true)
+      MR_IID=$(echo "$MR_JSON" | grep -o '"iid":[0-9]*' | head -1 | cut -d: -f2 || true)
+      if [ -z "$MR_IID" ]; then
+        echo "Could not open the MR $CI_DEFAULT_BRANCH → develop: open it by hand"; exit 0
+      fi
+      # The MR pipeline takes a few seconds to exist; until then GitLab refuses to set auto-merge.
+      for i in $(seq 1 12); do
+        if api --request PUT "$API/merge_requests/$MR_IID/merge" --data "auto_merge=true" \
+             --data "merge_when_pipeline_succeeds=true" --data "squash=false" \
+             --data "should_remove_source_branch=false" >/dev/null 2>&1; then
+          echo "MR !$MR_IID $CI_DEFAULT_BRANCH → develop will merge by itself when its pipeline passes"; exit 0
+        fi
+        sleep 5
+      done
+      echo "MR !$MR_IID $CI_DEFAULT_BRANCH → develop is open, but auto-merge could not be set: merge it by hand"
 
 # ---------------------------------------------------------------------------
 # tag vX.Y.Z: promotion and production
