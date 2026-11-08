@@ -63,7 +63,7 @@ go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/api/main.go -o docs/s
 Após regenerar o Swagger, confira `git diff --stat docs/swagger`; se não puder regenerar, diga que ficou desatualizado.
 O CI (`.gitlab-ci.yml`, GitLab) roda todos esses checks (Swagger desatualizado, cobertura < 10% e qualquer
 achado do golangci-lint ou do govulncheck reprovam) e publica imagens/deploys pelo fluxo de branches:
-`feature/*` → MR → `develop` (ambiente dev) → `release/X.Y.Z` (homolog) → MR sem squash → `master` (tag `vX.Y.Z`,
+`feature/*` → MR → `develop` (ambiente dev) → `release/X.Y.Z` (homolog) → MR → `master` (tag `vX.Y.Z`,
 produção). Correção urgente: `hotfix/X.Y.Z` a partir da última tag. Detalhes em `../we-sync-infra/docs/03-ci-cd.md`.
 Não existe Makefile — não crie sem pedido.
 

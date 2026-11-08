@@ -95,9 +95,11 @@ workflow:
             echo "Release $version must be greater than the last version ($last)"; return 1
           fi
         fi
-        # Otherwise a fix released in the meantime (hotfix) would be lost in production.
-        if ! git merge-base --is-ancestor "$last" HEAD; then
-          echo "$branch does not contain $last: merge master into it first"; return 1
+        # Otherwise a fix released in the meantime (hotfix) would be lost in production. Checks content, not
+        # history: merging $last into HEAD must change nothing, so a squashed merge from master also counts.
+        merged=$(git merge-tree --write-tree HEAD "$last" 2>/dev/null | head -1 || true)
+        if [ "$merged" != "$(git rev-parse 'HEAD^{tree}')" ]; then
+          echo "$branch does not contain the changes of $last: merge master into it first"; return 1
         fi
         echo "Version $version OK (last: $last)"
       }
@@ -117,8 +119,8 @@ check-version:
     - !reference [.check-version-fn, script]
     - check_version "$CI_COMMIT_BRANCH"
 
-# Master only receives release/hotfix branches, merged without squash, so master and develop keep
-# sharing history and the merge commit names the version.
+# Master only receives release/hotfix branches (the merge commit names the version). Squash or not does
+# not matter: version checks compare content, and the merge commit is created either way.
 mr-to-master:
   stage: lint
   cache: []
@@ -129,10 +131,6 @@ mr-to-master:
   script:
     - !reference [.check-version-fn, script]
     - check_version "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
-    - |
-      if [ "$CI_MERGE_REQUEST_SQUASH_ON_MERGE" = "true" ]; then
-        echo "Uncheck 'Squash commits' in this MR and run the pipeline again"; exit 1
-      fi
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -289,7 +287,7 @@ release-tag:
         || api "$API/merge_requests?state=opened&source_branch=$CI_DEFAULT_BRANCH&target_branch=develop" || true)
       MR_IID=$(echo "$MR_JSON" | grep -o '"iid":[0-9]*' | head -1 | cut -d: -f2 || true)
       if [ -z "$MR_IID" ]; then
-        echo "Could not open the MR $CI_DEFAULT_BRANCH → develop: open it by hand (without squash)"; exit 0
+        echo "Could not open the MR $CI_DEFAULT_BRANCH → develop: open it by hand"; exit 0
       fi
       # The MR pipeline takes a few seconds to exist; until then GitLab refuses to set auto-merge.
       for i in $(seq 1 12); do
