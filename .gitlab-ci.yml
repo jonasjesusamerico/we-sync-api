@@ -114,6 +114,7 @@ deploy-homolog:
     - if: $CI_COMMIT_BRANCH == "homolog"
   variables:
     DEPLOY_ENV: homolog
+    COMPONENT: api
   trigger:
     project: saas/we-sync-infra
     branch: main
@@ -176,6 +177,7 @@ deploy-production:
       allow_failure: true
   variables:
     DEPLOY_ENV: production
+    COMPONENT: api
   trigger:
     project: saas/we-sync-infra
     branch: main
