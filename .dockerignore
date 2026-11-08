@@ -1,0 +1,16 @@
+# Keeps the build context small and free of local files (.env, caches). The images need only
+# go.mod/go.sum, cmd/, internal/, docs/ (swagger package) and migrations/ (Dockerfile.migrate).
+.git
+.go
+.cache
+.env
+*.env
+bin
+coverage.out
+_to_delete
+.claude
+.vscode
+.kiro
+perf
+http
+observability
