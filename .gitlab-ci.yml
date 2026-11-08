@@ -84,6 +84,9 @@ build:
 .docker:
   image: docker:cli
   cache: []
+  variables:
+    # Docker 29 adds attestation manifests that the GitLab registry rejects ("blob unknown to registry").
+    BUILDX_NO_DEFAULT_ATTESTATIONS: '1'
   before_script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
 
@@ -97,8 +100,8 @@ image-homolog:
   rules:
     - if: $CI_COMMIT_BRANCH == "homolog"
   script:
-    - docker build --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" -t "$API_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$API_IMAGE:homolog" .
-    - docker build -f Dockerfile.migrate -t "$MIGRATE_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$MIGRATE_IMAGE:homolog" .
+    - docker build --provenance=false --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" -t "$API_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$API_IMAGE:homolog" .
+    - docker build --provenance=false -f Dockerfile.migrate -t "$MIGRATE_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$MIGRATE_IMAGE:homolog" .
     - |
       for tag in "$CI_COMMIT_SHORT_SHA" homolog; do
         docker push "$API_IMAGE:$tag"
