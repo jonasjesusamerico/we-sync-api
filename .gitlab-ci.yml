@@ -168,7 +168,10 @@ swagger:
   stage: lint
   script:
     - go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/api/main.go -o docs/swagger
-    - git diff --exit-code docs/swagger || { echo "docs/swagger is outdated: run swag init and commit"; exit 1; }
+    - |
+      if ! git diff --exit-code docs/swagger; then
+        echo "docs/swagger is outdated: run swag init and commit"; exit 1
+      fi
 
 govulncheck:
   extends: .validation
