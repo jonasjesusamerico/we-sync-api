@@ -8,7 +8,7 @@ valem mais do que demonstrar padrões. Qualidade **não** se mede em número de 
 
 ## Stack (evidência: `go.mod`, `docker-compose.yml`)
 
-- Go 1.27.2, `net/http` + `go-chi/chi/v5`
+- Go 1.27.3, `net/http` + `go-chi/chi/v5`
 - PostgreSQL 17 via `database/sql` + driver `pgx/v5/stdlib` (sem ORM), pools separados `database.DB.Write` / `database.DB.Read`
 - Migrations SQL com `golang-migrate` (`migrations/NNNNNN_nome.{up,down}.sql`), executadas pelo serviço `migrate` do compose
 - Auth: JWT HS256 (`golang-jwt/jwt/v5`) + refresh token opaco (hash SHA-256 no banco) + `bcrypt`
@@ -47,7 +47,10 @@ Regras detalhadas em `.claude/rules/` (carregadas pelos arquivos em uso): `archi
 
 ```bash
 gofmt -l internal cmd          # deve retornar vazio; corrigir com gofmt -w <arquivo>
-go vet ./...                   # única análise estática configurada
+go vet ./...
+docker --context default run --rm -v $PWD:/app -w /app golangci/golangci-lint:v2.15.0 golangci-lint run ./...   # o contexto Docker padrão aponta para o servidor
+go mod tidy -diff              # deve retornar vazio
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 go build ./...
 go test ./...                  # unitários, não exigem banco
 go test -race ./internal/...   # ao mexer em concorrência/middlewares
@@ -58,7 +61,11 @@ go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/api/main.go -o docs/s
 ```
 
 Após regenerar o Swagger, confira `git diff --stat docs/swagger`; se não puder regenerar, diga que ficou desatualizado.
-Não existe Makefile nem CI — não crie sem pedido.
+O CI (`.gitlab-ci.yml`, GitLab) roda todos esses checks (Swagger desatualizado, cobertura < 10% e qualquer
+achado do golangci-lint ou do govulncheck reprovam) e publica imagens/deploys pelo fluxo de branches:
+`feature/*` → MR → `develop` (ambiente dev) → `release/X.Y.Z` (homolog) → MR sem squash → `master` (tag `vX.Y.Z`,
+produção). Correção urgente: `hotfix/X.Y.Z` a partir da última tag. Detalhes em `../we-sync-infra/docs/03-ci-cd.md`.
+Não existe Makefile — não crie sem pedido.
 
 ## Fluxo de trabalho
 

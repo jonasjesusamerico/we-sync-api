@@ -1,10 +1,12 @@
-# Flow:
-#   MR (into homolog or master)  → lint, test, build
-#   merge into homolog           → + image :<commit>/:homolog → deploy homolog (we-sync-infra)
-#   merge into master            → + semantic-release vX.Y.Z → :homolog becomes :vX.Y.Z/:production
-#                                  → deploy production (manual button)
+# Flow (details in we-sync-infra/docs/03-ci-cd.md):
+#   feature/WS-0001 ──MR──▶ develop      MR: validation · merge: image :dev → deploy dev
+#   release/X.Y.Z (from develop)         validation · image :X.Y.Z-rc/:homolog → deploy homolog (QA)
+#   hotfix/X.Y.Z (from tag vX.Y.Z-1)     same as release
+#   release|hotfix ──MR──▶ master        merge: tag vX.Y.Z + GitLab release + MR master → develop
+#   tag vX.Y.Z                           :X.Y.Z-rc becomes :vX.Y.Z/:production → deploy production (manual)
+# Rollback: Build > Pipelines > Run pipeline on an older tag, then press deploy-production.
 
-image: golang:1.27.2
+image: golang:1.27.3
 
 default:
   interruptible: true
@@ -13,8 +15,8 @@ stages:
   - lint
   - test
   - build
-  - release
   - publish
+  - release
   - deploy
 
 variables:
@@ -24,65 +26,38 @@ variables:
   GOFLAGS: -mod=readonly
   API_IMAGE: $CI_REGISTRY_IMAGE
   MIGRATE_IMAGE: $CI_REGISTRY_IMAGE/migrate
-
-cache:
-  key:
-    files:
-      - go.sum
-  paths:
-    - .go/pkg/mod/
-    - .cache/
+  COVERAGE_MIN: "10"
 
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "homolog"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Any release/ or hotfix/ name runs, so a wrong version fails in check-version instead of being ignored.
+    - if: $CI_COMMIT_BRANCH =~ /^(release|hotfix)\//
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 # ---------------------------------------------------------------------------
-# Validation (every pipeline)
+# Shared pieces
 # ---------------------------------------------------------------------------
 
-format:
-  stage: lint
-  script:
-    - UNFORMATTED=$(gofmt -l $(git ls-files '*.go'))
-    - if [ -n "$UNFORMATTED" ]; then echo "Arquivos sem gofmt:"; echo "$UNFORMATTED"; exit 1; fi
-
-vet:
-  stage: lint
-  script:
-    - go vet ./...
-
-golangci-lint:
-  stage: lint
-  image: golangci/golangci-lint:latest
-  script:
-    - golangci-lint run ./...
-  allow_failure: true
-
-test:
-  stage: test
-  script:
-    - go test -race -coverprofile=coverage.out ./...
-    - go tool cover -func=coverage.out | tail -1
-  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
-
-build:
-  stage: build
-  script:
-    - go build -o bin/app ./cmd/api
-  artifacts:
+# Validation runs on MRs (except into master: the release branch was validated on push) and on pushes to
+# develop, release/* and hotfix/*. It does not run again on master or on tags: those reuse the validated image.
+.validation:
+  cache:
+    key:
+      files:
+        - go.sum
     paths:
-      - bin/
-    expire_in: 1 week
-
-# ---------------------------------------------------------------------------
-# Docker jobs: they use the server's Docker (socket shared by the runner)
-# ---------------------------------------------------------------------------
+      - .go/pkg/mod/
+      - .cache/
+    policy: pull
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH =~ /^(release|hotfix)\//
 
 .docker:
-  image: docker:cli
+  image: docker:29.1.4-cli
   cache: []
   variables:
     # Docker 29 adds attestation manifests that the GitLab registry rejects ("blob unknown to registry").
@@ -90,95 +65,302 @@ build:
   before_script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
 
+# Checks the version in a release/X.Y.Z or hotfix/X.Y.Z branch name against the existing tags.
+# Usage: check_version <branch name>. Needs the full history (GIT_DEPTH: 0).
+.check-version-fn:
+  script:
+    - |
+      check_version() {
+        branch="$1"; kind="${branch%%/*}"; version="${branch#*/}"
+        if ! echo "$branch" | grep -Eq '^(release|hotfix)/[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "Branch '$branch' must be named release/X.Y.Z or hotfix/X.Y.Z"; return 1
+        fi
+        git fetch --quiet --tags --force origin
+        if [ -n "$(git tag -l "v$version")" ]; then echo "Tag v$version already exists"; return 1; fi
+        last=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+        if [ -z "$last" ]; then
+          if [ "$kind" = hotfix ]; then echo "No version released yet: use release/X.Y.Z"; return 1; fi
+          echo "First version: v$version"; return 0
+        fi
+        last_version="${last#v}"
+        if [ "$kind" = hotfix ]; then
+          expected=$(echo "$last_version" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 + 1 }')
+          if [ "$version" != "$expected" ]; then
+            echo "Production is $last: the hotfix must be hotfix/$expected"; return 1
+          fi
+        else
+          highest=$(printf '%s\n%s\n' "$last_version" "$version" | sort -V | tail -1)
+          if [ "$version" = "$last_version" ] || [ "$highest" != "$version" ]; then
+            echo "Release $version must be greater than the last version ($last)"; return 1
+          fi
+        fi
+        # Otherwise a fix released in the meantime (hotfix) would be lost in production.
+        if ! git merge-base --is-ancestor "$last" HEAD; then
+          echo "$branch does not contain $last: merge master into it first"; return 1
+        fi
+        echo "Version $version OK (last: $last)"
+      }
+
 # ---------------------------------------------------------------------------
-# homolog
+# Guards
 # ---------------------------------------------------------------------------
 
-image-homolog:
+check-version:
+  stage: lint
+  cache: []
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(release|hotfix)\//
+  script:
+    - !reference [.check-version-fn, script]
+    - check_version "$CI_COMMIT_BRANCH"
+
+# Master only receives release/hotfix branches, merged without squash, so master and develop keep
+# sharing history and the merge commit names the version.
+mr-to-master:
+  stage: lint
+  cache: []
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH
+  script:
+    - !reference [.check-version-fn, script]
+    - check_version "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+    - |
+      if [ "$CI_MERGE_REQUEST_SQUASH_ON_MERGE" = "true" ]; then
+        echo "Uncheck 'Squash commits' in this MR and run the pipeline again"; exit 1
+      fi
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+format:
+  extends: .validation
+  stage: lint
+  script:
+    - UNFORMATTED=$(gofmt -l $(git ls-files '*.go'))
+    - if [ -n "$UNFORMATTED" ]; then echo "Files not formatted with gofmt:"; echo "$UNFORMATTED"; exit 1; fi
+
+vet:
+  extends: .validation
+  stage: lint
+  script:
+    - go vet ./...
+
+golangci-lint:
+  extends: .validation
+  stage: lint
+  image: golangci/golangci-lint:v2.15.0
+  script:
+    - golangci-lint run ./...
+
+mod-tidy:
+  extends: .validation
+  stage: lint
+  script:
+    - go mod tidy -diff
+
+swagger:
+  extends: .validation
+  stage: lint
+  script:
+    - go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/api/main.go -o docs/swagger
+    - |
+      if ! git diff --exit-code docs/swagger; then
+        echo "docs/swagger is outdated: run swag init and commit"; exit 1
+      fi
+
+govulncheck:
+  extends: .validation
+  stage: lint
+  script:
+    - go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+test:
+  extends: .validation
+  stage: test
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go/pkg/mod/
+      - .cache/
+    policy: pull-push
+  script:
+    - go test -race -coverprofile=coverage.out ./...
+    - go tool cover -func=coverage.out | tail -1
+    - TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
+    - |
+      if ! awk -v t="$TOTAL" -v m="$COVERAGE_MIN" 'BEGIN { exit !(t + 0 >= m + 0) }'; then
+        echo "Coverage $TOTAL% is below the minimum of $COVERAGE_MIN%"; exit 1
+      fi
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+
+build:
+  extends: .validation
+  stage: build
+  script:
+    - go build ./...
+
+# ---------------------------------------------------------------------------
+# Images (develop, release/*, hotfix/*)
+# ---------------------------------------------------------------------------
+
+# Every image carries the commit it was built from; promote uses it to check what goes to production.
+.build-images:
   extends: .docker
   stage: publish
-  rules:
-    - if: $CI_COMMIT_BRANCH == "homolog"
+  interruptible: false
   script:
-    - docker build --provenance=false --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" -t "$API_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$API_IMAGE:homolog" .
-    - docker build --provenance=false -f Dockerfile.migrate -t "$MIGRATE_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$MIGRATE_IMAGE:homolog" .
     - |
-      for tag in "$CI_COMMIT_SHORT_SHA" homolog; do
+      for tag in $IMAGE_TAGS; do API_TAGS="$API_TAGS -t $API_IMAGE:$tag"; MIGRATE_TAGS="$MIGRATE_TAGS -t $MIGRATE_IMAGE:$tag"; done
+      LABEL="org.opencontainers.image.revision=$CI_COMMIT_SHA"
+      docker build --provenance=false --label "$LABEL" $API_TAGS .
+      docker build --provenance=false --label "$LABEL" -f Dockerfile.migrate $MIGRATE_TAGS .
+      for tag in $IMAGE_TAGS; do
         docker push "$API_IMAGE:$tag"
         docker push "$MIGRATE_IMAGE:$tag"
       done
 
-deploy-homolog:
-  stage: deploy
+image-dev:
+  extends: .build-images
+  resource_group: image-dev
   rules:
-    - if: $CI_COMMIT_BRANCH == "homolog"
+    - if: $CI_COMMIT_BRANCH == "develop"
   variables:
-    DEPLOY_ENV: homolog
-    COMPONENT: api
-  trigger:
-    project: saas/we-sync-infra
-    branch: main
-    strategy: depend
+    IMAGE_TAGS: "$CI_COMMIT_SHORT_SHA dev"
+
+image-homolog:
+  extends: .build-images
+  resource_group: image-homolog
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(release|hotfix)\/\d+\.\d+\.\d+$/
+  before_script:
+    - !reference [.docker, before_script]
+    - export IMAGE_TAGS="$CI_COMMIT_SHORT_SHA ${CI_COMMIT_BRANCH#*/}-rc homolog"
 
 # ---------------------------------------------------------------------------
-# master: version, promotion and production
+# master: version tag
 # ---------------------------------------------------------------------------
 
-# Creates the vX.Y.Z tag and the GitLab release from the commit messages since the last tag.
-# Needs the GITLAB_TOKEN variable (project access token, scopes api + write_repository).
-release:
+# Reads X.Y.Z from the merged branch, creates tag vX.Y.Z (which starts the production pipeline), the
+# GitLab release, and the MR that brings master back into develop.
+# Needs GITLAB_TOKEN (project access token, role Maintainer, scope api only: it calls the API, never git push).
+release-tag:
   stage: release
-  image: node:24-alpine
   cache: []
   interruptible: false
   variables:
     GIT_DEPTH: "0"
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-  before_script:
-    - apk add --no-cache git
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
   script:
-    - touch release.env
-    - npx --yes -p semantic-release -p @semantic-release/gitlab -p @semantic-release/exec semantic-release
-    - cat release.env
-  artifacts:
-    reports:
-      dotenv: release.env
+    - |
+      SOURCE=$(git log -1 --format=%s | sed -nE "s#^Merge branch '((release|hotfix)/[0-9]+\.[0-9]+\.[0-9]+)' into .*#\1#p")
+      if [ -z "$SOURCE" ]; then
+        echo "This commit is not a merge of release/X.Y.Z or hotfix/X.Y.Z: no version to create."
+        exit 0
+      fi
+      VERSION="${SOURCE#*/}"
+      PREVIOUS=$(git describe --tags --abbrev=0 --match 'v*' HEAD^1 2>/dev/null || true)
+      NOTES=$(git log --no-merges --format='- %s' ${PREVIOUS:+$PREVIOUS..}HEAD^2 | head -200)
+      API="$CI_API_V4_URL/projects/$CI_PROJECT_ID"
+      api() { curl --silent --show-error --fail-with-body --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$@"; }
 
-# Promotes the image validated in homolog: same image, new tags.
+      api --request POST "$API/repository/tags" \
+        --data-urlencode "tag_name=v$VERSION" --data-urlencode "ref=$CI_COMMIT_SHA" \
+        --data-urlencode "message=Version $VERSION ($SOURCE)" >/dev/null
+      echo "Created tag v$VERSION"
+      api --request POST "$API/releases" \
+        --data-urlencode "tag_name=v$VERSION" --data-urlencode "name=v$VERSION" \
+        --data-urlencode "description=${NOTES:-No changes listed}" >/dev/null
+      echo "Created release v$VERSION"
+      # 409 = an open MR master → develop already exists: it will carry this merge too.
+      api --request POST "$API/merge_requests" \
+        --data-urlencode "source_branch=$CI_DEFAULT_BRANCH" --data-urlencode "target_branch=develop" \
+        --data-urlencode "title=chore: bring v$VERSION back into develop" >/dev/null \
+        && echo "Opened MR $CI_DEFAULT_BRANCH → develop" \
+        || echo "MR $CI_DEFAULT_BRANCH → develop not opened (it may already exist): check it by hand"
+
+# ---------------------------------------------------------------------------
+# tag vX.Y.Z: promotion and production
+# ---------------------------------------------------------------------------
+
+# Promotes the image QA validated: same image, new tags. On a rerun of an older tag (rollback) the
+# image :vX.Y.Z already exists and is used as is.
 promote:
   extends: .docker
   stage: publish
   interruptible: false
-  needs: [release]
+  variables:
+    GIT_DEPTH: "0"
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
   script:
+    - apk add --no-cache git >/dev/null
     - |
-      if [ -z "$VERSION" ]; then
-        echo "No feat/fix/perf commit since the last version: nothing to release."
-        exit 0
-      fi
+      VERSION="${CI_COMMIT_TAG#v}"
+      if docker pull --quiet "$API_IMAGE:v$VERSION" >/dev/null 2>&1; then SOURCE_TAG="v$VERSION"; else SOURCE_TAG="$VERSION-rc"; fi
+      EXPECTED_TREE=$(git rev-parse "HEAD^{tree}")
       for img in "$API_IMAGE" "$MIGRATE_IMAGE"; do
-        docker pull "$img:homolog"
-        docker tag "$img:homolog" "$img:v$VERSION"
-        docker tag "$img:homolog" "$img:production"
-        docker push "$img:v$VERSION"
-        docker push "$img:production"
+        docker pull --quiet "$img:$SOURCE_TAG" >/dev/null
+        REV=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$img:$SOURCE_TAG")
+        TREE=$(git rev-parse --verify --quiet "$REV^{tree}" || true)
+        if [ "$TREE" != "$EXPECTED_TREE" ]; then
+          echo "$img:$SOURCE_TAG was built from '$REV', whose files differ from $CI_COMMIT_TAG."
+          echo "Push the release/hotfix branch again so a matching image is built, then rerun this pipeline."
+          exit 1
+        fi
       done
-      echo "Released v$VERSION"
+      for img in "$API_IMAGE" "$MIGRATE_IMAGE"; do
+        for tag in "v$VERSION" production; do
+          docker tag "$img:$SOURCE_TAG" "$img:$tag"
+          docker push --quiet "$img:$tag"
+        done
+      done
+      echo "$CI_COMMIT_TAG is now :production (from :$SOURCE_TAG)"
+
+# ---------------------------------------------------------------------------
+# Deploys (we-sync-infra makes the environment match the registry tag)
+# ---------------------------------------------------------------------------
+
+.deploy:
+  stage: deploy
+  interruptible: false
+  trigger:
+    project: saas/we-sync-infra
+    branch: main
+    strategy: depend
+
+deploy-dev:
+  extends: .deploy
+  needs: [image-dev]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  variables:
+    DEPLOY_ENV: dev
+    COMPONENT: api
+
+deploy-homolog:
+  extends: .deploy
+  needs: [image-homolog]
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(release|hotfix)\/\d+\.\d+\.\d+$/
+  variables:
+    DEPLOY_ENV: homolog
+    COMPONENT: api
 
 deploy-production:
-  stage: deploy
+  extends: .deploy
   needs: [promote]
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
       when: manual
       allow_failure: true
   variables:
     DEPLOY_ENV: production
     COMPONENT: api
-  trigger:
-    project: saas/we-sync-infra
-    branch: main
-    strategy: depend
