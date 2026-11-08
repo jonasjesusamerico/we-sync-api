@@ -1,0 +1,3 @@
+# Migrations of this API version, packed with the migrate CLI. The deploy runs it before the new API starts.
+FROM migrate/migrate:v4.17.0
+COPY migrations /migrations

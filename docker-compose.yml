@@ -1,3 +1,28 @@
+# Local development settings. No .env is needed: each value has a default below, and an optional
+# .env next to this file overrides any of them (Compose reads it for ${VAR} interpolation).
+# Homolog and production do not use this file: see saas/we-sync-infra.
+x-api-env: &api-env
+  APP_ENV_NAME: ${APP_ENV_NAME:-DEV}
+  SERVER_PORT: ${SERVER_PORT:-8080}
+  DATABASE_WRITE_DSN: ${DATABASE_WRITE_DSN:-postgres://postgres:postgres@postgres:5432/finance?sslmode=disable}
+  DATABASE_READ_DSN: ${DATABASE_READ_DSN:-postgres://postgres:postgres@postgres:5432/finance?sslmode=disable}
+  DATABASE_WRITE_CONN_MAX_LIFETIME: ${DATABASE_WRITE_CONN_MAX_LIFETIME:-30}
+  DATABASE_WRITE_CONN_MAX_IDLE_TIME: ${DATABASE_WRITE_CONN_MAX_IDLE_TIME:-5}
+  DATABASE_READ_CONN_MAX_LIFETIME: ${DATABASE_READ_CONN_MAX_LIFETIME:-30}
+  DATABASE_READ_CONN_MAX_IDLE_TIME: ${DATABASE_READ_CONN_MAX_IDLE_TIME:-5}
+  LOGGER_LEVEL: ${LOGGER_LEVEL:-0}
+  ENABLE_PPROF: ${ENABLE_PPROF:-false}
+  ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+  # Development-only secret (>= 32 bytes). Never reused outside this local stack.
+  JWT_SECRET: ${JWT_SECRET:-local-docker-compose-only-jwt-secret-not-for-homolog-or-prod}
+  JWT_ACCESS_TOKEN_DURATION: ${JWT_ACCESS_TOKEN_DURATION:-15m}
+  JWT_REFRESH_TOKEN_DURATION: ${JWT_REFRESH_TOKEN_DURATION:-168h}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-we-sync-api}
+  OTEL_SERVICE_VERSION: ${OTEL_SERVICE_VERSION:-1.0.0}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
+  OTEL_PROMETHEUS_PORT: ${OTEL_PROMETHEUS_PORT:-9090}
+
 services:
 
   # Resource budget: the sum of mem_limit and cpus of all long-running services
@@ -45,8 +70,6 @@ services:
 
   migrate:
     image: migrate/migrate:v4.17.0
-    env_file:
-      - .env
     container_name: we-sync-migrate
     depends_on:
       postgres:
@@ -56,7 +79,7 @@ services:
     command:
       [
         "-path", "/migrations",
-        "-database", "${DATABASE_WRITE_DSN}",
+        "-database", "${DATABASE_WRITE_DSN:-postgres://postgres:postgres@postgres:5432/finance?sslmode=disable}",
         "up"
       ]
 
@@ -85,9 +108,8 @@ services:
       dockerfile: Dockerfile
     container_name: we-sync-api-1
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      <<: *api-env
       # These only tune the Go runtime to the cpus/mem_limit below: change them together.
       # Soft heap target under mem_limit, so the GC works harder before the kernel OOM-kills.
       GOMEMLIMIT: 78MiB
@@ -120,9 +142,8 @@ services:
       dockerfile: Dockerfile
     container_name: we-sync-api-2
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      <<: *api-env
       # These only tune the Go runtime to the cpus/mem_limit below: change them together.
       # Soft heap target under mem_limit, so the GC works harder before the kernel OOM-kills.
       GOMEMLIMIT: 78MiB
