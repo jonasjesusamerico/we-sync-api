@@ -57,6 +57,10 @@ export function listPurchases(token, query = '') {
   return jsonOrNull(request('GET', `/purchases${query}`, { token, name: 'GET /purchases' }), 200);
 }
 
+export function monthOverview(token, query) {
+  return jsonOrNull(request('GET', `/purchases/overview${query}`, { token, name: 'GET /purchases/overview' }), 200);
+}
+
 export function getPurchase(token, id) {
   return request('GET', `/purchases/${id}`, { token, name: 'GET /purchases/{id}' });
 }

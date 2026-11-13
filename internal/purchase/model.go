@@ -155,14 +155,17 @@ const (
 
 // Comparison compares the month with the previous one over the same period.
 type Comparison struct {
-	Period         ComparisonPeriod `json:"period"`
-	UntilDay       *int             `json:"until_day"` // null in FULL_MONTH
-	PreviousYear   int              `json:"previous_year"`
-	PreviousMonth  int              `json:"previous_month"`
-	CurrentAmount  decimal.Decimal  `json:"current_amount"`
-	PreviousAmount decimal.Decimal  `json:"previous_amount"`
-	Result         ComparisonResult `json:"result"`
-	Percent        *int64           `json:"percent"` // null only in NO_BASE
+	Period   ComparisonPeriod `json:"period"`
+	UntilDay *int             `json:"until_day"` // null in FULL_MONTH
+	// PreviousUntilDay is the last day summed of the previous month in UNTIL_DAY:
+	// min(until_day, last day of the previous month). Null in FULL_MONTH and without a previous month.
+	PreviousUntilDay *int             `json:"previous_until_day"`
+	PreviousYear     int              `json:"previous_year"`
+	PreviousMonth    int              `json:"previous_month"`
+	CurrentAmount    decimal.Decimal  `json:"current_amount"`
+	PreviousAmount   decimal.Decimal  `json:"previous_amount"`
+	Result           ComparisonResult `json:"result"`
+	Percent          *int64           `json:"percent"` // null only in NO_BASE
 }
 
 // MonthSummary is the response of GET /purchases/summary.
@@ -199,3 +202,90 @@ const (
 	minSummaryYear = 1
 	maxSummaryYear = 9999
 )
+
+// ---------------------------------------------------------------------------
+// Month overview (GET /purchases/overview)
+// ---------------------------------------------------------------------------
+
+// overviewLatestLimit is how many purchases the overview lists (RN-07 of feature 007).
+const overviewLatestLimit = 6
+
+// StatusTotal is the sum and the count of the month's purchases of one status.
+type StatusTotal struct {
+	Amount decimal.Decimal `json:"amount"`
+	Count  int             `json:"count"`
+}
+
+// DailyAverage is the month's spending per day: up to today in the current month, else the whole month.
+type DailyAverage struct {
+	Amount decimal.Decimal `json:"amount"` // rounded to the cent, half up
+	Days   int             `json:"days"`
+}
+
+// DayAmount is the PAID + PENDING spending of one day of the month.
+type DayAmount struct {
+	Day      int             `json:"day"`
+	Amount   decimal.Decimal `json:"amount"`
+	Forecast bool            `json:"forecast"` // current month and a day after today
+}
+
+// CategoryShare is the PAID + PENDING spending of one category in the month.
+type CategoryShare struct {
+	Category category.CategorySummary `json:"category"`
+	Amount   decimal.Decimal          `json:"amount"`
+	Percent  int64                    `json:"percent"` // of spent, rounded half up
+}
+
+// PaymentMethodShare is the PAID + PENDING spending of one payment method in the month.
+type PaymentMethodShare struct {
+	PaymentMethod paymentmethod.PaymentMethodSummary `json:"payment_method"`
+	Amount        decimal.Decimal                    `json:"amount"`
+	Percent       int64                              `json:"percent"`
+}
+
+// MonthOverview is the response of GET /purchases/overview. Every list is [] when empty, never null.
+type MonthOverview struct {
+	Year           int                  `json:"year"`
+	Month          int                  `json:"month"`
+	DaysInMonth    int                  `json:"days_in_month"`
+	IsCurrentMonth bool                 `json:"is_current_month"`
+	Paid           StatusTotal          `json:"paid"`
+	Pending        StatusTotal          `json:"pending"`
+	ActiveCount    int                  `json:"active_count"` // paid.count + pending.count
+	Spent          decimal.Decimal      `json:"spent"`        // paid.amount + pending.amount
+	DailyAverage   DailyAverage         `json:"daily_average"`
+	PeakDay        *int                 `json:"peak_day"` // null only when spent is 0
+	Daily          []DayAmount          `json:"daily"`
+	Categories     []CategoryShare      `json:"categories"`
+	PaymentMethods []PaymentMethodShare `json:"payment_methods"`
+	Latest         []Purchase           `json:"latest"`
+}
+
+// DayTotals is one row of the per-day read: a day of the month with PAID or PENDING purchases.
+type DayTotals struct {
+	Date          time.Time // purchase_date, UTC midnight
+	PaidAmount    decimal.Decimal
+	PaidCount     int
+	PendingAmount decimal.Decimal
+	PendingCount  int
+}
+
+// CategoryTotal is the PAID + PENDING sum of one category in the month.
+type CategoryTotal struct {
+	Category category.CategorySummary
+	Amount   decimal.Decimal
+}
+
+// PaymentMethodTotal is the PAID + PENDING sum of one payment method in the month.
+type PaymentMethodTotal struct {
+	PaymentMethod paymentmethod.PaymentMethodSummary
+	Amount        decimal.Decimal
+}
+
+// OverviewData is what Repository.Overview reads, all from one snapshot.
+type OverviewData struct {
+	Days           []DayTotals          // ascending by date; only days with PAID or PENDING
+	Categories     []CategoryTotal      // amount desc, then catalog_name_key(name), then id
+	PaymentMethods []PaymentMethodTotal // same order
+	Latest         []Purchase           // every status; purchase_date desc, id desc; at most overviewLatestLimit
+}

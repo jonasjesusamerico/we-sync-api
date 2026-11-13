@@ -9,6 +9,7 @@ export const options = {
   iterations: 1,
   thresholds: {
     checks: ['rate==1'],
+    'http_req_duration{name:GET /purchases/overview}': ['p(95)<500'],
   },
 };
 
@@ -43,6 +44,11 @@ export default function (data) {
   const [year, month] = purchase.purchase_date.split('-');
   const page = api.listPurchases(token, `?year=${year}&month=${Number(month)}`);
   check(page, { 'month filter returns the new purchase': (p) => p && p.items.some((it) => it.id === purchase.id) });
+  const overview = api.monthOverview(token, `?year=${year}&month=${Number(month)}&today=${purchase.purchase_date}`);
+  check(overview, {
+    'overview has one bar per day': (o) => o && o.daily.length === o.days_in_month,
+    'overview counts the new purchase': (o) => o && (purchase.status === 'CANCELED' || o.active_count > 0),
+  });
   api.updatePurchase(token, purchase.id, randomPurchase(data.refs));
   api.deletePurchase(token, purchase.id);
 }

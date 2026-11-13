@@ -232,12 +232,14 @@ func TestRouter_UsersMe_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// stubPurchaseService implements the purchase handler's service interface. Only Summary
-// is expected to be reached; it records the user id found in the request context.
+// stubPurchaseService implements the purchase handler's service interface. Only Summary and
+// Overview are expected to be reached; they record the user id found in the request context.
 type stubPurchaseService struct {
-	t             *testing.T
-	summaryCalled bool
-	summaryUserID int64
+	t              *testing.T
+	summaryCalled  bool
+	summaryUserID  int64
+	overviewCalled bool
+	overviewUserID int64
 }
 
 func (s *stubPurchaseService) Create(context.Context, *purchase.CreatePurchaseRequest) (*purchase.Purchase, error) {
@@ -246,7 +248,7 @@ func (s *stubPurchaseService) Create(context.Context, *purchase.CreatePurchaseRe
 }
 
 func (s *stubPurchaseService) GetByID(context.Context, int64) (*purchase.Purchase, error) {
-	s.t.Fatal("GetByID must not be called: /summary must not fall into /{id}")
+	s.t.Fatal("GetByID must not be called: /summary and /overview must not fall into /{id}")
 	return nil, nil
 }
 
@@ -269,6 +271,12 @@ func (s *stubPurchaseService) Summary(ctx context.Context, year, month int, _ ti
 	s.summaryCalled = true
 	s.summaryUserID, _ = identity.UserIDFromContext(ctx)
 	return &purchase.MonthSummary{Year: year, Month: month}, nil
+}
+
+func (s *stubPurchaseService) Overview(ctx context.Context, year, month int, _ time.Time) (*purchase.MonthOverview, error) {
+	s.overviewCalled = true
+	s.overviewUserID, _ = identity.UserIDFromContext(ctx)
+	return &purchase.MonthOverview{Year: year, Month: month}, nil
 }
 
 func newPurchaseTestRouter(t *testing.T) (http.Handler, *stubPurchaseService) {
@@ -315,6 +323,37 @@ func TestRouter_PurchasesSummary_RequiresToken(t *testing.T) {
 	}
 	if stub.summaryCalled {
 		t.Fatal("Summary must not be called without a token")
+	}
+}
+
+func TestRouter_PurchasesOverview_RoutesToOverview(t *testing.T) {
+	h, stub := newPurchaseTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/purchases/overview?year=2026&month=11&today=2026-11-10", nil)
+	req.Header.Set("Authorization", "Bearer "+validToken(t, "42"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !stub.overviewCalled || stub.overviewUserID != 42 {
+		t.Fatalf("overviewCalled=%v userID=%d, want the id from the token (42)", stub.overviewCalled, stub.overviewUserID)
+	}
+}
+
+func TestRouter_PurchasesOverview_RequiresToken(t *testing.T) {
+	h, stub := newPurchaseTestRouter(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/purchases/overview?year=2026&month=11&today=2026-11-10", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if body := decodeError(t, rec); body.Message != "missing authentication token" {
+		t.Fatalf("message = %q", body.Message)
+	}
+	if stub.overviewCalled {
+		t.Fatal("Overview must not be called without a token")
 	}
 }
 

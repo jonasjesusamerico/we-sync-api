@@ -6,7 +6,7 @@
 #   tag vX.Y.Z                           :X.Y.Z-rc becomes :vX.Y.Z/:production → deploy production (manual)
 # Rollback: Build > Pipelines > Run pipeline on an older tag, then press deploy-production.
 
-image: golang:1.27.3
+image: golang:1.27.4
 
 default:
   interruptible: true

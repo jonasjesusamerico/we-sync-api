@@ -3,6 +3,7 @@ package purchase
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,10 @@ func TestService_OperationsRequireUserID(t *testing.T) {
 			called = true
 			return &SummarySums{}, nil
 		},
+		OverviewFn: func(context.Context, int64, time.Time, time.Time) (*OverviewData, error) {
+			called = true
+			return &OverviewData{}, nil
+		},
 	}
 	svc := newSvc(repo, globalCatRepo())
 	if _, err := svc.Create(context.Background(), validCreateRequest()); !errors.Is(err, apperrors.ErrUnauthorized) {
@@ -126,6 +131,9 @@ func TestService_OperationsRequireUserID(t *testing.T) {
 	}
 	if _, err := svc.Summary(context.Background(), 2026, 11, day(2026, 11, 10)); !errors.Is(err, apperrors.ErrUnauthorized) {
 		t.Errorf("Summary() error = %v, want unauthorized", err)
+	}
+	if _, err := svc.Overview(context.Background(), 2026, 11, nov(10)); !errors.Is(err, apperrors.ErrUnauthorized) {
+		t.Errorf("Overview() error = %v, want unauthorized", err)
 	}
 	if called {
 		t.Fatal("repository was called without user ID")
@@ -731,6 +739,7 @@ func reais(s string) decimal.Decimal { return decimal.RequireFromString(s) }
 
 func TestSummaryRanges(t *testing.T) {
 	ten, thirtyOne, thirty, fifteen := 10, 31, 30, 15
+	twentyEight, twentyNine := 28, 29
 	tests := []struct {
 		name        string
 		year, month int
@@ -740,7 +749,7 @@ func TestSummaryRanges(t *testing.T) {
 		{"(a) current month: until today's day", 2026, 11, day(2026, 11, 10), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(2026, 11, 1), MonthEnd: day(2026, 11, 30), CurrentEnd: day(2026, 11, 10),
 				HasPrevious: true, PreviousStart: day(2026, 10, 1), PreviousEnd: day(2026, 10, 10)},
-			period: PeriodUntilDay, untilDay: &ten, previousYear: 2026, previousMonth: 10}},
+			period: PeriodUntilDay, untilDay: &ten, previousUntilDay: &ten, previousYear: 2026, previousMonth: 10}},
 		{"(b) past month: whole months", 2026, 9, day(2026, 11, 10), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(2026, 9, 1), MonthEnd: day(2026, 9, 30), CurrentEnd: day(2026, 9, 30),
 				HasPrevious: true, PreviousStart: day(2026, 8, 1), PreviousEnd: day(2026, 8, 31)},
@@ -748,15 +757,15 @@ func TestSummaryRanges(t *testing.T) {
 		{"(c) previous month shorter: whole February", 2027, 3, day(2027, 3, 31), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(2027, 3, 1), MonthEnd: day(2027, 3, 31), CurrentEnd: day(2027, 3, 31),
 				HasPrevious: true, PreviousStart: day(2027, 2, 1), PreviousEnd: day(2027, 2, 28)},
-			period: PeriodUntilDay, untilDay: &thirtyOne, previousYear: 2027, previousMonth: 2}},
+			period: PeriodUntilDay, untilDay: &thirtyOne, previousUntilDay: &twentyEight, previousYear: 2027, previousMonth: 2}},
 		{"(d) leap February", 2028, 3, day(2028, 3, 30), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(2028, 3, 1), MonthEnd: day(2028, 3, 31), CurrentEnd: day(2028, 3, 30),
 				HasPrevious: true, PreviousStart: day(2028, 2, 1), PreviousEnd: day(2028, 2, 29)},
-			period: PeriodUntilDay, untilDay: &thirty, previousYear: 2028, previousMonth: 2}},
+			period: PeriodUntilDay, untilDay: &thirty, previousUntilDay: &twentyNine, previousYear: 2028, previousMonth: 2}},
 		{"(e) January compares with December", 2027, 1, day(2027, 1, 15), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(2027, 1, 1), MonthEnd: day(2027, 1, 31), CurrentEnd: day(2027, 1, 15),
 				HasPrevious: true, PreviousStart: day(2026, 12, 1), PreviousEnd: day(2026, 12, 15)},
-			period: PeriodUntilDay, untilDay: &fifteen, previousYear: 2026, previousMonth: 12}},
+			period: PeriodUntilDay, untilDay: &fifteen, previousUntilDay: &fifteen, previousYear: 2026, previousMonth: 12}},
 		{"(f) future month: whole months", 2026, 12, day(2026, 11, 10), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(2026, 12, 1), MonthEnd: day(2026, 12, 31), CurrentEnd: day(2026, 12, 31),
 				HasPrevious: true, PreviousStart: day(2026, 11, 1), PreviousEnd: day(2026, 11, 30)},
@@ -771,11 +780,18 @@ func TestSummaryRanges(t *testing.T) {
 		{"(i) December of 9999", 9999, 12, day(9999, 12, 31), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(9999, 12, 1), MonthEnd: day(9999, 12, 31), CurrentEnd: day(9999, 12, 31),
 				HasPrevious: true, PreviousStart: day(9999, 11, 1), PreviousEnd: day(9999, 11, 30)},
-			period: PeriodUntilDay, untilDay: &thirtyOne, previousYear: 9999, previousMonth: 11}},
+			period: PeriodUntilDay, untilDay: &thirtyOne, previousUntilDay: &thirty, previousYear: 9999, previousMonth: 11}},
 		{"(j) today in year 0 only decides the period", 2026, 11, day(0, 11, 10), summaryPlan{
 			ranges: SummaryRanges{MonthStart: day(2026, 11, 1), MonthEnd: day(2026, 11, 30), CurrentEnd: day(2026, 11, 30),
 				HasPrevious: true, PreviousStart: day(2026, 10, 1), PreviousEnd: day(2026, 10, 31)},
 			period: PeriodFullMonth, previousYear: 2026, previousMonth: 10}},
+		{"(k) 31/10 against a 30-day September", 2026, 10, day(2026, 10, 31), summaryPlan{
+			ranges: SummaryRanges{MonthStart: day(2026, 10, 1), MonthEnd: day(2026, 10, 31), CurrentEnd: day(2026, 10, 31),
+				HasPrevious: true, PreviousStart: day(2026, 9, 1), PreviousEnd: day(2026, 9, 30)},
+			period: PeriodUntilDay, untilDay: &thirtyOne, previousUntilDay: &thirty, previousYear: 2026, previousMonth: 9}},
+		{"(l) today in January of year 1", 1, 1, day(1, 1, 15), summaryPlan{
+			ranges: SummaryRanges{MonthStart: day(1, 1, 1), MonthEnd: day(1, 1, 31), CurrentEnd: day(1, 1, 15)},
+			period: PeriodUntilDay, untilDay: &fifteen, previousYear: 0, previousMonth: 12}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -793,7 +809,36 @@ func TestSummaryRanges(t *testing.T) {
 			case tt.want.untilDay != nil && (got.untilDay == nil || *got.untilDay != *tt.want.untilDay):
 				t.Errorf("untilDay = %v, want %d", got.untilDay, *tt.want.untilDay)
 			}
+			switch {
+			case tt.want.previousUntilDay == nil && got.previousUntilDay != nil:
+				t.Errorf("previousUntilDay = %d, want nil", *got.previousUntilDay)
+			case tt.want.previousUntilDay != nil && (got.previousUntilDay == nil || *got.previousUntilDay != *tt.want.previousUntilDay):
+				t.Errorf("previousUntilDay = %v, want %d", got.previousUntilDay, *tt.want.previousUntilDay)
+			}
 		})
+	}
+}
+
+func TestMonthBounds(t *testing.T) {
+	tests := []struct {
+		year, month int
+		wantEnd     time.Time
+	}{
+		{2026, 11, day(2026, 11, 30)},
+		{2026, 2, day(2026, 2, 28)},
+		{2028, 2, day(2028, 2, 29)},
+		{2026, 12, day(2026, 12, 31)},
+		{1, 1, day(1, 1, 31)},
+		{9999, 12, day(9999, 12, 31)},
+	}
+	for _, tt := range tests {
+		start, end := monthBounds(tt.year, tt.month)
+		if want := day(tt.year, time.Month(tt.month), 1); !start.Equal(want) {
+			t.Errorf("(%d, %d): start = %s, want %s", tt.year, tt.month, start, want)
+		}
+		if !end.Equal(tt.wantEnd) {
+			t.Errorf("(%d, %d): end = %s, want %s", tt.year, tt.month, end, tt.wantEnd)
+		}
 	}
 }
 
@@ -884,7 +929,8 @@ func TestService_Summary_CurrentMonth(t *testing.T) {
 	}
 	c := got.Comparison
 	if got.Year != 2026 || got.Month != 11 || got.PurchaseCount != 3 || !got.Spent.Equal(reais("150")) ||
-		c.Period != PeriodUntilDay || c.UntilDay == nil || *c.UntilDay != 10 || c.PreviousYear != 2026 || c.PreviousMonth != 10 ||
+		c.Period != PeriodUntilDay || c.UntilDay == nil || *c.UntilDay != 10 ||
+		c.PreviousUntilDay == nil || *c.PreviousUntilDay != 10 || c.PreviousYear != 2026 || c.PreviousMonth != 10 ||
 		!c.CurrentAmount.Equal(reais("100")) || !c.PreviousAmount.Equal(reais("200")) ||
 		c.Result != ResultLess || c.Percent == nil || *c.Percent != 50 {
 		t.Errorf("summary = %+v, comparison = %+v", got, c)
@@ -900,7 +946,28 @@ func TestService_Summary_OtherMonth(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	c := got.Comparison
-	if c.Period != PeriodFullMonth || c.UntilDay != nil || c.Result != ResultMore || c.Percent == nil || *c.Percent != 10 {
+	if c.Period != PeriodFullMonth || c.UntilDay != nil || c.PreviousUntilDay != nil ||
+		c.Result != ResultMore || c.Percent == nil || *c.Percent != 10 {
+		t.Errorf("comparison = %+v", c)
+	}
+}
+
+// CA-13 of feature 007: the 31st against a 30-day September.
+func TestService_Summary_ShorterPreviousMonth(t *testing.T) {
+	svc := summaryService(func(_ context.Context, _ int64, ranges SummaryRanges) (*SummarySums, error) {
+		if !ranges.PreviousEnd.Equal(day(2026, 9, 30)) {
+			t.Errorf("PreviousEnd = %s, want 2026-09-30", ranges.PreviousEnd)
+		}
+		return &SummarySums{MonthCount: 12, MonthSpent: reais("950"), CurrentAmount: reais("950"), PreviousAmount: reais("1000")}, nil
+	})
+	got, err := svc.Summary(identity.WithUserID(context.Background(), 7), 2026, 10, day(2026, 10, 31))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := got.Comparison
+	if c.Period != PeriodUntilDay || c.UntilDay == nil || *c.UntilDay != 31 ||
+		c.PreviousUntilDay == nil || *c.PreviousUntilDay != 30 || c.PreviousYear != 2026 || c.PreviousMonth != 9 ||
+		c.Result != ResultLess || c.Percent == nil || *c.Percent != 5 {
 		t.Errorf("comparison = %+v", c)
 	}
 }
@@ -1168,4 +1235,583 @@ func TestService_Update_ArchivedReferences(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Overview (feature 007)
+// ---------------------------------------------------------------------------
+
+// nov is a day of November 2026, the month of the acceptance criteria (today 2026-11-10).
+func nov(d int) time.Time { return day(2026, 11, d) }
+
+func dayTotals(date time.Time, paid string, paidN int, pending string, pendingN int) DayTotals {
+	return DayTotals{Date: date, PaidAmount: reais(paid), PaidCount: paidN, PendingAmount: reais(pending), PendingCount: pendingN}
+}
+
+func catTotal(id int64, name, amount string) CategoryTotal {
+	return CategoryTotal{Category: category.CategorySummary{ID: id, Name: name, IsGlobal: true}, Amount: reais(amount)}
+}
+
+func pmTotal(id int64, name, amount string) PaymentMethodTotal {
+	return PaymentMethodTotal{PaymentMethod: paymentmethod.PaymentMethodSummary{ID: id, Name: name, IsGlobal: true}, Amount: reais(amount)}
+}
+
+// Global categories and payment methods of the seed used by the examples.
+var (
+	catFood      = category.CategorySummary{ID: 1, Name: "Alimentação", IsGlobal: true, Icon: category.IconFood, Color: category.ColorFood}
+	catTransport = category.CategorySummary{ID: 2, Name: "Transporte", IsGlobal: true, Icon: category.IconCar, Color: category.ColorTransport}
+	catHome      = category.CategorySummary{ID: 3, Name: "Moradia", IsGlobal: true, Icon: category.IconHouse, Color: category.ColorHome}
+	catLeisure   = category.CategorySummary{ID: 6, Name: "Lazer", IsGlobal: true, Icon: category.IconSmile, Color: category.ColorLeisure}
+	pmCredit     = paymentmethod.PaymentMethodSummary{ID: 2, Name: "Cartão de crédito", IsGlobal: true}
+	pmPix        = paymentmethod.PaymentMethodSummary{ID: 4, Name: "Pix", IsGlobal: true}
+	pmBoleto     = paymentmethod.PaymentMethodSummary{ID: 6, Name: "Boleto", IsGlobal: true}
+)
+
+func e1Purchase(id int64, date time.Time, desc string, c category.CategorySummary,
+	pm paymentmethod.PaymentMethodSummary, amount string, status Status) Purchase {
+	return Purchase{ID: id, UserID: 7, PurchaseDate: Date{date}, Description: desc, Category: c, PaymentMethod: pm,
+		Amount: reais(amount), Status: status, CreatedAt: date, UpdatedAt: date}
+}
+
+// e1Data is example E1 of the SDD (the acceptance criteria table, today 2026-11-10), as the
+// repository returns it: CANCELED out of the sums, rows already ordered.
+func e1Data() *OverviewData {
+	return &OverviewData{
+		Days: []DayTotals{
+			dayTotals(nov(2), "100", 1, "0", 0),
+			dayTotals(nov(5), "100", 2, "0", 0),
+			dayTotals(nov(25), "0", 0, "1000", 1),
+		},
+		Categories: []CategoryTotal{
+			{Category: catHome, Amount: reais("1000")},
+			{Category: catFood, Amount: reais("160")},
+			{Category: catTransport, Amount: reais("40")},
+		},
+		PaymentMethods: []PaymentMethodTotal{
+			{PaymentMethod: pmBoleto, Amount: reais("1000")},
+			{PaymentMethod: pmPix, Amount: reais("160")},
+			{PaymentMethod: pmCredit, Amount: reais("40")},
+		},
+		Latest: []Purchase{
+			e1Purchase(105, nov(25), "Aluguel", catHome, pmBoleto, "1000", StatusPending),
+			e1Purchase(104, nov(8), "Cinema", catLeisure, pmCredit, "30", StatusCanceled),
+			e1Purchase(103, nov(5), "Padaria", catFood, pmPix, "60", StatusPaid),
+			e1Purchase(102, nov(5), "Uber", catTransport, pmCredit, "40", StatusPaid),
+			e1Purchase(101, nov(2), "Mercado", catFood, pmPix, "100", StatusPaid),
+		},
+	}
+}
+
+// e2Data is example E2 of the SDD: October 2026 of prototype/assets/app.js (the canceled show out).
+func e2Data() *OverviewData {
+	oct := func(d int) time.Time { return day(2026, 10, d) }
+	paid := func(d int, amount string) DayTotals { return dayTotals(oct(d), amount, 1, "0", 0) }
+	pending := func(d int, amount string) DayTotals { return dayTotals(oct(d), "0", 0, amount, 1) }
+	return &OverviewData{
+		Days: []DayTotals{
+			paid(2, "1450.00"), paid(3, "386.45"), paid(5, "210.00"), paid(7, "74.90"), paid(8, "58.00"),
+			paid(10, "320.00"), paid(12, "64.00"), paid(14, "182.37"), paid(15, "92.50"), paid(17, "38.70"),
+			paid(19, "27.80"), pending(21, "250.00"), paid(23, "412.30"), pending(25, "119.90"), paid(28, "69.90"),
+			paid(29, "143.60"), pending(30, "25.00"),
+		},
+		Categories: []CategoryTotal{
+			catTotal(3, "Moradia", "1752.27"), catTotal(1, "Alimentação", "1120.65"), catTotal(5, "Educação", "389.90"),
+			catTotal(4, "Saúde", "324.90"), catTotal(2, "Transporte", "273.70"), catTotal(6, "Lazer", "64.00"),
+		},
+		PaymentMethods: []PaymentMethodTotal{
+			pmTotal(6, "Boleto", "1889.90"), pmTotal(2, "Cartão de crédito", "1118.60"), pmTotal(3, "Cartão de débito", "414.25"),
+			pmTotal(4, "Pix", "410.17"), pmTotal(1, "Dinheiro", "92.50"),
+		},
+	}
+}
+
+func catPercents(ov *MonthOverview) []int64 {
+	out := []int64{}
+	for _, c := range ov.Categories {
+		out = append(out, c.Percent)
+	}
+	return out
+}
+
+func pmPercents(ov *MonthOverview) []int64 {
+	out := []int64{}
+	for _, pm := range ov.PaymentMethods {
+		out = append(out, pm.Percent)
+	}
+	return out
+}
+
+// forecastDays lists the days marked as forecast.
+func forecastDays(ov *MonthOverview) []int {
+	out := []int{}
+	for _, d := range ov.Daily {
+		if d.Forecast {
+			out = append(out, d.Day)
+		}
+	}
+	return out
+}
+
+func daysRange(from, to int) []int {
+	out := []int{}
+	for d := from; d <= to; d++ {
+		out = append(out, d)
+	}
+	return out
+}
+
+func checkTotal(t *testing.T, name string, got StatusTotal, amount string, count int) {
+	t.Helper()
+	if !got.Amount.Equal(reais(amount)) || got.Count != count {
+		t.Errorf("%s = {%s, %d}, want {%s, %d}", name, got.Amount, got.Count, amount, count)
+	}
+}
+
+func checkAverage(t *testing.T, got DailyAverage, amount string, days int) {
+	t.Helper()
+	if got.Amount.String() != amount || got.Days != days {
+		t.Errorf("daily average = {%s, %d}, want {%s, %d}", got.Amount, got.Days, amount, days)
+	}
+}
+
+func checkPeak(t *testing.T, got *int, want int) {
+	t.Helper()
+	if want == 0 {
+		if got != nil {
+			t.Errorf("peak day = %d, want nil", *got)
+		}
+		return
+	}
+	if got == nil || *got != want {
+		t.Errorf("peak day = %v, want %d", got, want)
+	}
+}
+
+func TestBuildOverview(t *testing.T) {
+	oneDay := func(date time.Time, paid string, paidN int, pending string, pendingN int) *OverviewData {
+		return &OverviewData{Days: []DayTotals{dayTotals(date, paid, paidN, pending, pendingN)}}
+	}
+	tests := []struct {
+		name        string
+		year, month int
+		today       time.Time
+		data        *OverviewData
+		check       func(t *testing.T, ov *MonthOverview)
+	}{
+		{"CA-01 kpis", 2026, 11, nov(10), e1Data(), func(t *testing.T, ov *MonthOverview) {
+			checkTotal(t, "paid", ov.Paid, "200", 3)
+			checkTotal(t, "pending", ov.Pending, "1000", 1)
+			checkAverage(t, ov.DailyAverage, "20", 10)
+			if ov.ActiveCount != 4 || ov.Spent.String() != "1200" || !ov.IsCurrentMonth || ov.DaysInMonth != 30 {
+				t.Errorf("active %d spent %s current %v days %d", ov.ActiveCount, ov.Spent, ov.IsCurrentMonth, ov.DaysInMonth)
+			}
+		}},
+		{"CA-02 daily", 2026, 11, nov(10), e1Data(), func(t *testing.T, ov *MonthOverview) {
+			if len(ov.Daily) != 30 {
+				t.Fatalf("len(daily) = %d, want 30", len(ov.Daily))
+			}
+			for i, d := range ov.Daily {
+				if d.Day != i+1 {
+					t.Errorf("daily[%d].Day = %d", i, d.Day)
+				}
+			}
+			want := map[int]string{2: "100", 5: "100", 8: "0", 25: "1000", 1: "0", 30: "0"}
+			for d, amount := range want {
+				if ov.Daily[d-1].Amount.String() != amount {
+					t.Errorf("day %d = %s, want %s", d, ov.Daily[d-1].Amount, amount)
+				}
+			}
+			if got := forecastDays(ov); !reflect.DeepEqual(got, daysRange(11, 30)) {
+				t.Errorf("forecast days = %v", got)
+			}
+			checkPeak(t, ov.PeakDay, 25)
+		}},
+		{"CA-03 peak tie", 2026, 11, nov(10), &OverviewData{Days: []DayTotals{
+			dayTotals(nov(2), "100", 1, "0", 0), dayTotals(nov(5), "100", 1, "0", 0),
+		}}, func(t *testing.T, ov *MonthOverview) { checkPeak(t, ov.PeakDay, 2) }},
+		{"CA-04/05 shares", 2026, 11, nov(10), e1Data(), func(t *testing.T, ov *MonthOverview) {
+			if got := catPercents(ov); !reflect.DeepEqual(got, []int64{83, 13, 3}) {
+				t.Errorf("category percents = %v", got)
+			}
+			if ov.Categories[0].Category != catHome || ov.Categories[1].Category != catFood || ov.Categories[2].Category != catTransport {
+				t.Errorf("categories = %+v", ov.Categories)
+			}
+			if got := pmPercents(ov); !reflect.DeepEqual(got, []int64{83, 13, 3}) {
+				t.Errorf("payment method percents = %v", got)
+			}
+			if ov.PaymentMethods[0].PaymentMethod != pmBoleto || ov.PaymentMethods[1].PaymentMethod != pmPix ||
+				ov.PaymentMethods[2].PaymentMethod != pmCredit {
+				t.Errorf("payment methods = %+v", ov.PaymentMethods)
+			}
+		}},
+		{"CA-06/07 latest passes through", 2026, 11, nov(10), e1Data(), func(t *testing.T, ov *MonthOverview) {
+			ids := []int64{}
+			for _, p := range ov.Latest {
+				ids = append(ids, p.ID)
+			}
+			if !reflect.DeepEqual(ids, []int64{105, 104, 103, 102, 101}) {
+				t.Errorf("latest ids = %v", ids)
+			}
+		}},
+		{"CA-09 past month", 2026, 9, nov(10), oneDay(day(2026, 9, 10), "900", 3, "0", 0), func(t *testing.T, ov *MonthOverview) {
+			checkAverage(t, ov.DailyAverage, "30", 30)
+			if ov.IsCurrentMonth || len(forecastDays(ov)) != 0 {
+				t.Errorf("current %v forecast %v", ov.IsCurrentMonth, forecastDays(ov))
+			}
+		}},
+		{"CA-10 future month", 2026, 12, nov(10), oneDay(day(2026, 12, 5), "0", 0, "100", 1), func(t *testing.T, ov *MonthOverview) {
+			checkAverage(t, ov.DailyAverage, "3.23", 31)
+			checkPeak(t, ov.PeakDay, 5)
+			if ov.DaysInMonth != 31 || ov.ActiveCount != 1 || len(forecastDays(ov)) != 0 {
+				t.Errorf("days %d active %d forecast %v", ov.DaysInMonth, ov.ActiveCount, forecastDays(ov))
+			}
+		}},
+		{"CA-11 empty month", 2026, 12, nov(10), &OverviewData{}, func(t *testing.T, ov *MonthOverview) {
+			checkAverage(t, ov.DailyAverage, "0", 31)
+			checkPeak(t, ov.PeakDay, 0)
+			if ov.ActiveCount != 0 || !ov.Spent.IsZero() || len(ov.Daily) != 31 {
+				t.Errorf("active %d spent %s daily %d", ov.ActiveCount, ov.Spent, len(ov.Daily))
+			}
+			for _, d := range ov.Daily {
+				if !d.Amount.IsZero() {
+					t.Errorf("day %d = %s", d.Day, d.Amount)
+				}
+			}
+			if ov.Categories == nil || ov.PaymentMethods == nil || ov.Latest == nil ||
+				len(ov.Categories)+len(ov.PaymentMethods)+len(ov.Latest) != 0 {
+				t.Errorf("lists must be empty and not nil: %#v %#v %#v", ov.Categories, ov.PaymentMethods, ov.Latest)
+			}
+		}},
+		{"CA-12 only canceled", 2026, 8, nov(10), &OverviewData{Latest: []Purchase{
+			e1Purchase(120, day(2026, 8, 15), "Show", catLeisure, pmCredit, "80", StatusCanceled),
+		}}, func(t *testing.T, ov *MonthOverview) {
+			checkPeak(t, ov.PeakDay, 0)
+			if ov.ActiveCount != 0 || !ov.Spent.IsZero() || len(ov.Latest) != 1 {
+				t.Errorf("active %d spent %s latest %d", ov.ActiveCount, ov.Spent, len(ov.Latest))
+			}
+		}},
+		{"CA-15 leap February", 2028, 2, nov(10), &OverviewData{}, func(t *testing.T, ov *MonthOverview) {
+			if ov.DaysInMonth != 29 || len(ov.Daily) != 29 || ov.DailyAverage.Days != 29 {
+				t.Errorf("days %d daily %d average days %d", ov.DaysInMonth, len(ov.Daily), ov.DailyAverage.Days)
+			}
+		}},
+		{"CA-15 February", 2027, 2, nov(10), &OverviewData{}, func(t *testing.T, ov *MonthOverview) {
+			if ov.DaysInMonth != 28 || len(ov.Daily) != 28 {
+				t.Errorf("days %d daily %d", ov.DaysInMonth, len(ov.Daily))
+			}
+		}},
+		{"CA-16 first day", 2026, 11, nov(1), oneDay(nov(1), "50", 1, "0", 0), func(t *testing.T, ov *MonthOverview) {
+			checkAverage(t, ov.DailyAverage, "50", 1)
+			if got := forecastDays(ov); !reflect.DeepEqual(got, daysRange(2, 30)) {
+				t.Errorf("forecast days = %v", got)
+			}
+		}},
+		{"current month ignores future days in the average", 2026, 11, nov(10), &OverviewData{Days: []DayTotals{
+			dayTotals(nov(2), "100", 1, "0", 0), dayTotals(nov(25), "0", 0, "1000", 1),
+		}}, func(t *testing.T, ov *MonthOverview) {
+			checkAverage(t, ov.DailyAverage, "10", 10)
+			if ov.Spent.String() != "1100" {
+				t.Errorf("spent = %s", ov.Spent)
+			}
+		}},
+		{"last day of the month has no forecast", 2026, 10, day(2026, 10, 31), e2Data(), func(t *testing.T, ov *MonthOverview) {
+			checkTotal(t, "paid", ov.Paid, "3530.52", 14)
+			checkTotal(t, "pending", ov.Pending, "394.9", 3)
+			checkAverage(t, ov.DailyAverage, "126.63", 31)
+			checkPeak(t, ov.PeakDay, 2)
+			if ov.ActiveCount != 17 || ov.Spent.String() != "3925.42" || !ov.IsCurrentMonth || len(forecastDays(ov)) != 0 {
+				t.Errorf("active %d spent %s current %v forecast %v", ov.ActiveCount, ov.Spent, ov.IsCurrentMonth, forecastDays(ov))
+			}
+			if got := catPercents(ov); !reflect.DeepEqual(got, []int64{45, 29, 10, 8, 7, 2}) {
+				t.Errorf("category percents = %v (want sum 101)", got)
+			}
+			if got := pmPercents(ov); !reflect.DeepEqual(got, []int64{48, 28, 11, 10, 2}) {
+				t.Errorf("payment method percents = %v (want sum 99)", got)
+			}
+		}},
+		{"average rounds half a cent up", 2026, 11, nov(2), oneDay(nov(1), "0.01", 1, "0", 0), func(t *testing.T, ov *MonthOverview) {
+			checkAverage(t, ov.DailyAverage, "0.01", 2)
+		}},
+		{"percent rounds half up", 2026, 9, nov(10), &OverviewData{
+			Days:       []DayTotals{dayTotals(day(2026, 9, 1), "8", 2, "0", 0)},
+			Categories: []CategoryTotal{catTotal(10, "A", "1"), catTotal(11, "B", "7")},
+		}, func(t *testing.T, ov *MonthOverview) {
+			if got := catPercents(ov); !reflect.DeepEqual(got, []int64{13, 88}) {
+				t.Errorf("percents = %v", got)
+			}
+		}},
+		{"percent of a tiny share is 0", 2026, 9, nov(10), &OverviewData{
+			Days:       []DayTotals{dayTotals(day(2026, 9, 1), "1000.01", 2, "0", 0)},
+			Categories: []CategoryTotal{catTotal(10, "A", "1000"), catTotal(11, "B", "0.01")},
+		}, func(t *testing.T, ov *MonthOverview) {
+			if got := catPercents(ov); !reflect.DeepEqual(got, []int64{100, 0}) {
+				t.Errorf("percents = %v", got)
+			}
+		}},
+		{"same month of another year is not current", 2025, 11, nov(10), &OverviewData{}, func(t *testing.T, ov *MonthOverview) {
+			if ov.IsCurrentMonth || ov.DailyAverage.Days != 30 || len(forecastDays(ov)) != 0 {
+				t.Errorf("current %v average days %d forecast %v", ov.IsCurrentMonth, ov.DailyAverage.Days, forecastDays(ov))
+			}
+		}},
+		{"today in year 0 only decides the period", 2026, 11, day(0, 11, 10), e1Data(), func(t *testing.T, ov *MonthOverview) {
+			checkAverage(t, ov.DailyAverage, "40", 30)
+			if ov.IsCurrentMonth {
+				t.Error("IsCurrentMonth = true")
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ov, err := buildOverview(tt.year, tt.month, tt.today, tt.data)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ov.Year != tt.year || ov.Month != tt.month {
+				t.Errorf("year/month = %d/%d", ov.Year, ov.Month)
+			}
+			tt.check(t, ov)
+		})
+	}
+}
+
+func TestBuildOverview_DayOutsideMonth(t *testing.T) {
+	data := &OverviewData{Days: []DayTotals{dayTotals(day(2026, 12, 1), "10", 1, "0", 0)}}
+	if _, err := buildOverview(2026, 11, nov(10), data); err == nil {
+		t.Fatal("want an error for a day outside the month")
+	}
+}
+
+// split divides total (> 0) into n parts > 0, in cents.
+func split(t *rapid.T, label string, total int64, n int) []int64 {
+	if int64(n) > total {
+		n = int(total)
+	}
+	parts := make([]int64, n)
+	rest := total
+	for i := 0; i < n-1; i++ {
+		// leave at least 1 cent for each remaining part
+		p := rapid.Int64Range(1, rest-int64(n-1-i)).Draw(t, label)
+		parts[i] = p
+		rest -= p
+	}
+	parts[n-1] = rest
+	return parts
+}
+
+func TestBuildOverview_Properties(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		year := rapid.IntRange(2000, 2100).Draw(t, "year")
+		month := rapid.IntRange(1, 12).Draw(t, "month")
+		start, end := monthBounds(year, month)
+		offset := rapid.IntRange(-1, 1).Draw(t, "todayMonthOffset")
+		todayMonthStart := start.AddDate(0, offset, 0)
+		_, todayMonthEnd := monthBounds(todayMonthStart.Year(), int(todayMonthStart.Month()))
+		today := todayMonthStart.AddDate(0, 0, rapid.IntRange(0, todayMonthEnd.Day()-1).Draw(t, "todayDay"))
+
+		data := &OverviewData{}
+		var spentCents int64
+		for d := 1; d <= end.Day(); d++ {
+			if !rapid.Bool().Draw(t, "hasDay") {
+				continue
+			}
+			paidN := rapid.IntRange(0, 3).Draw(t, "paidN")
+			pendingN := rapid.IntRange(0, 3).Draw(t, "pendingN")
+			if paidN+pendingN == 0 {
+				paidN = 1
+			}
+			var paid, pending int64
+			if paidN > 0 {
+				paid = rapid.Int64Range(1, 1e8).Draw(t, "paidCents")
+			}
+			if pendingN > 0 {
+				pending = rapid.Int64Range(1, 1e8).Draw(t, "pendingCents")
+			}
+			spentCents += paid + pending
+			data.Days = append(data.Days, DayTotals{Date: day(year, time.Month(month), d),
+				PaidAmount: decimal.New(paid, -2), PaidCount: paidN, PendingAmount: decimal.New(pending, -2), PendingCount: pendingN})
+		}
+		if spentCents > 0 {
+			for i, c := range split(t, "category", spentCents, rapid.IntRange(1, 5).Draw(t, "nCategories")) {
+				data.Categories = append(data.Categories, CategoryTotal{
+					Category: category.CategorySummary{ID: int64(i + 1)}, Amount: decimal.New(c, -2)})
+			}
+			for i, c := range split(t, "paymentMethod", spentCents, rapid.IntRange(1, 5).Draw(t, "nPaymentMethods")) {
+				data.PaymentMethods = append(data.PaymentMethods, PaymentMethodTotal{
+					PaymentMethod: paymentmethod.PaymentMethodSummary{ID: int64(i + 1)}, Amount: decimal.New(c, -2)})
+			}
+		}
+
+		ov, err := buildOverview(year, month, today, data)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(ov.Daily) != ov.DaysInMonth || ov.DaysInMonth != end.Day() {
+			t.Fatalf("len(daily) = %d, days in month = %d", len(ov.Daily), ov.DaysInMonth)
+		}
+		dailySum, catSum, pmSum := decimal.Zero, decimal.Zero, decimal.Zero
+		for i, d := range ov.Daily {
+			if d.Day != i+1 {
+				t.Fatalf("daily[%d].Day = %d", i, d.Day)
+			}
+			dailySum = dailySum.Add(d.Amount)
+		}
+		for _, c := range ov.Categories {
+			catSum = catSum.Add(c.Amount)
+			if c.Percent < 0 || c.Percent > 100 {
+				t.Fatalf("category percent = %d", c.Percent)
+			}
+		}
+		for _, pm := range ov.PaymentMethods {
+			pmSum = pmSum.Add(pm.Amount)
+			if pm.Percent < 0 || pm.Percent > 100 {
+				t.Fatalf("payment method percent = %d", pm.Percent)
+			}
+		}
+		if !dailySum.Equal(ov.Spent) || !catSum.Equal(ov.Spent) || !pmSum.Equal(ov.Spent) ||
+			!ov.Paid.Amount.Add(ov.Pending.Amount).Equal(ov.Spent) {
+			t.Fatalf("sums differ: daily %s categories %s payment methods %s paid+pending %s spent %s",
+				dailySum, catSum, pmSum, ov.Paid.Amount.Add(ov.Pending.Amount), ov.Spent)
+		}
+		if ov.ActiveCount != ov.Paid.Count+ov.Pending.Count {
+			t.Fatalf("active %d != %d + %d", ov.ActiveCount, ov.Paid.Count, ov.Pending.Count)
+		}
+		if (ov.PeakDay == nil) != ov.Spent.IsZero() {
+			t.Fatalf("peak %v with spent %s", ov.PeakDay, ov.Spent)
+		}
+		if ov.PeakDay != nil {
+			peak := ov.Daily[*ov.PeakDay-1].Amount
+			for i, d := range ov.Daily {
+				if d.Amount.GreaterThan(peak) || (i < *ov.PeakDay-1 && d.Amount.Equal(peak)) {
+					t.Fatalf("day %d (%s) beats peak day %d (%s)", d.Day, d.Amount, *ov.PeakDay, peak)
+				}
+			}
+		}
+		isCurrent := today.Year() == year && int(today.Month()) == month
+		if ov.IsCurrentMonth != isCurrent {
+			t.Fatalf("IsCurrentMonth = %v, today %s", ov.IsCurrentMonth, today.Format(dateLayout))
+		}
+		for _, d := range ov.Daily {
+			if d.Forecast != (isCurrent && d.Day > today.Day()) {
+				t.Fatalf("day %d forecast = %v, today %s", d.Day, d.Forecast, today.Format(dateLayout))
+			}
+		}
+		avg := ov.DailyAverage
+		if avg.Days < 1 || avg.Days > 31 || avg.Amount.Sign() < 0 || !avg.Amount.Equal(avg.Amount.Round(2)) {
+			t.Fatalf("daily average = {%s, %d}", avg.Amount, avg.Days)
+		}
+	})
+}
+
+func overviewService(fn func(context.Context, int64, time.Time, time.Time) (*OverviewData, error)) *Service {
+	return newSvc(&mockPurchaseRepository{OverviewFn: fn}, globalCatRepo())
+}
+
+func TestService_Overview_PassesMonthBounds(t *testing.T) {
+	tests := []struct {
+		year, month int
+		start, end  time.Time
+	}{
+		{2026, 11, day(2026, 11, 1), day(2026, 11, 30)},
+		{2028, 2, day(2028, 2, 1), day(2028, 2, 29)},
+		{9999, 12, day(9999, 12, 1), day(9999, 12, 31)},
+		{1, 1, day(1, 1, 1), day(1, 1, 31)},
+	}
+	for _, tt := range tests {
+		svc := overviewService(func(_ context.Context, userID int64, start, end time.Time) (*OverviewData, error) {
+			if userID != 7 || !start.Equal(tt.start) || !end.Equal(tt.end) {
+				t.Errorf("(%d, %d): repository got user %d, %s..%s", tt.year, tt.month, userID,
+					start.Format(dateLayout), end.Format(dateLayout))
+			}
+			return &OverviewData{}, nil
+		})
+		if _, err := svc.Overview(identity.WithUserID(context.Background(), 7), tt.year, tt.month, nov(10)); err != nil {
+			t.Errorf("(%d, %d): unexpected error: %v", tt.year, tt.month, err)
+		}
+	}
+}
+
+func TestService_Overview_BuildsFromRepository(t *testing.T) {
+	svc := overviewService(func(context.Context, int64, time.Time, time.Time) (*OverviewData, error) { return e1Data(), nil })
+	got, err := svc.Overview(identity.WithUserID(context.Background(), 7), 2026, 11, nov(10))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want, err := buildOverview(2026, 11, nov(10), e1Data())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Overview() = %+v\nwant %+v", got, want)
+	}
+}
+
+func TestService_Overview_InvalidInput(t *testing.T) {
+	tests := []struct {
+		year, month int
+		want        string
+	}{
+		{2026, 0, "month must be an integer between 1 and 12"},
+		{2026, 13, "month must be an integer between 1 and 12"},
+		{0, 1, "year must be an integer between 1 and 9999"},
+		{10000, 1, "year must be an integer between 1 and 9999"},
+	}
+	for _, tt := range tests {
+		called := false
+		svc := overviewService(func(context.Context, int64, time.Time, time.Time) (*OverviewData, error) {
+			called = true
+			return &OverviewData{}, nil
+		})
+		_, err := svc.Overview(identity.WithUserID(context.Background(), 7), tt.year, tt.month, nov(10))
+		if !errors.Is(err, apperrors.ErrValidation) || err.Error() != tt.want {
+			t.Errorf("(%d, %d): error = %v, want validation %q", tt.year, tt.month, err, tt.want)
+		}
+		if called {
+			t.Errorf("(%d, %d): repository must not be called", tt.year, tt.month)
+		}
+	}
+}
+
+func TestService_Overview_RepositoryError(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	svc := overviewService(func(context.Context, int64, time.Time, time.Time) (*OverviewData, error) { return nil, dbErr })
+	_, err := svc.Overview(identity.WithUserID(context.Background(), 7), 2026, 11, nov(10))
+	if !errors.Is(err, dbErr) || errors.Is(err, apperrors.ErrValidation) {
+		t.Errorf("error = %v, want wrapped dbErr", err)
+	}
+}
+
+func TestService_Overview_NilData(t *testing.T) {
+	svc := overviewService(func(context.Context, int64, time.Time, time.Time) (*OverviewData, error) { return nil, nil })
+	_, err := svc.Overview(identity.WithUserID(context.Background(), 7), 2026, 11, nov(10))
+	if err == nil || errors.Is(err, apperrors.ErrValidation) || errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("error = %v, want an internal error", err)
+	}
+}
+
+func TestService_Overview_BuildError(t *testing.T) {
+	svc := overviewService(func(context.Context, int64, time.Time, time.Time) (*OverviewData, error) {
+		return &OverviewData{Days: []DayTotals{dayTotals(day(2026, 12, 1), "10", 1, "0", 0)}}, nil
+	})
+	_, err := svc.Overview(identity.WithUserID(context.Background(), 7), 2026, 11, nov(10))
+	if err == nil || errors.Is(err, apperrors.ErrValidation) {
+		t.Errorf("error = %v, want an internal error", err)
+	}
+}
+
+func TestService_Overview_UserIDFromContext(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		userID := rapid.Int64Range(1, 1_000_000).Draw(t, "userID")
+		captured := int64(0)
+		svc := overviewService(func(_ context.Context, id int64, _, _ time.Time) (*OverviewData, error) {
+			captured = id
+			return &OverviewData{}, nil
+		})
+		if _, err := svc.Overview(identity.WithUserID(context.Background(), userID), 2026, 11, nov(10)); err != nil {
+			t.Fatalf("Overview() error = %v", err)
+		}
+		if captured != userID {
+			t.Fatalf("repository received user ID %d, want %d", captured, userID)
+		}
+	})
 }

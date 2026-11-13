@@ -94,8 +94,9 @@ func registerV1(r chi.Router, h Handlers, jwtSecret []byte, sessions middleware.
 			r.Route("/purchases", func(r chi.Router) {
 				r.Get("/", h.Purchase.List)
 				r.Post("/", h.Purchase.Create)
-				// Before /{id}, so "summary" is never parsed as a purchase id.
+				// Before /{id}, so "summary" and "overview" are never parsed as a purchase id.
 				r.Get("/summary", h.Purchase.Summary)
+				r.Get("/overview", h.Purchase.Overview)
 				r.Get("/{id}", h.Purchase.GetByID)
 				r.Put("/{id}", h.Purchase.Update)
 				r.Delete("/{id}", h.Purchase.Delete)

@@ -949,9 +949,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/purchases/overview": {
+            "get": {
+                "description": "KPIs, spending per day, per category and per payment method (PAID + PENDING of the whole month)\nand the 6 latest purchases of any status, all read from one database snapshot. today is the\nclient's local date: it decides the current month, the daily average and the forecast days.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "purchases"
+                ],
+                "summary": "Month overview of the home page",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Year (1-9999)",
+                        "name": "year",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Month (1-12)",
+                        "name": "month",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client local date (YYYY-MM-DD)",
+                        "name": "today",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/purchase.MonthOverview"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid year, month or today",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or invalid token",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/purchases/summary": {
             "get": {
-                "description": "Spent amount of the month (PAID + PENDING, every day of the month) and the comparison with the\nprevious month over the same period: up to today's day when the month is today's month, else the\nwhole months. today is the client's local date and only decides the period.",
+                "description": "Spent amount of the month (PAID + PENDING, every day of the month) and the comparison with the\nprevious month over the same period: up to today's day when the month is today's month, else the\nwhole months. today is the client's local date and only decides the period.\nprevious_until_day is the last day summed of the previous month (null in FULL_MONTH).",
                 "produces": [
                     "application/json"
                 ],
@@ -1756,6 +1817,21 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.CategoryShare": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "category": {
+                    "$ref": "#/definitions/category.CategorySummary"
+                },
+                "percent": {
+                    "description": "of spent, rounded half up",
+                    "type": "integer"
+                }
+            }
+        },
         "purchase.Comparison": {
             "type": "object",
             "properties": {
@@ -1773,6 +1849,10 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "previous_month": {
+                    "type": "integer"
+                },
+                "previous_until_day": {
+                    "description": "PreviousUntilDay is the last day summed of the previous month in UNTIL_DAY:\nmin(until_day, last day of the previous month). Null in FULL_MONTH and without a previous month.",
                     "type": "integer"
                 },
                 "previous_year": {
@@ -1840,11 +1920,100 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.DailyAverage": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "rounded to the cent, half up",
+                    "type": "number"
+                },
+                "days": {
+                    "type": "integer"
+                }
+            }
+        },
         "purchase.Date": {
             "type": "object",
             "properties": {
                 "time.Time": {
                     "type": "string"
+                }
+            }
+        },
+        "purchase.DayAmount": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "day": {
+                    "type": "integer"
+                },
+                "forecast": {
+                    "description": "current month and a day after today",
+                    "type": "boolean"
+                }
+            }
+        },
+        "purchase.MonthOverview": {
+            "type": "object",
+            "properties": {
+                "active_count": {
+                    "description": "paid.count + pending.count",
+                    "type": "integer"
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/purchase.CategoryShare"
+                    }
+                },
+                "daily": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/purchase.DayAmount"
+                    }
+                },
+                "daily_average": {
+                    "$ref": "#/definitions/purchase.DailyAverage"
+                },
+                "days_in_month": {
+                    "type": "integer"
+                },
+                "is_current_month": {
+                    "type": "boolean"
+                },
+                "latest": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/purchase.Purchase"
+                    }
+                },
+                "month": {
+                    "type": "integer"
+                },
+                "paid": {
+                    "$ref": "#/definitions/purchase.StatusTotal"
+                },
+                "payment_methods": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/purchase.PaymentMethodShare"
+                    }
+                },
+                "peak_day": {
+                    "description": "null only when spent is 0",
+                    "type": "integer"
+                },
+                "pending": {
+                    "$ref": "#/definitions/purchase.StatusTotal"
+                },
+                "spent": {
+                    "description": "paid.amount + pending.amount",
+                    "type": "number"
+                },
+                "year": {
+                    "type": "integer"
                 }
             }
         },
@@ -1896,6 +2065,20 @@ const docTemplate = `{
                 }
             }
         },
+        "purchase.PaymentMethodShare": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "payment_method": {
+                    "$ref": "#/definitions/paymentmethod.PaymentMethodSummary"
+                },
+                "percent": {
+                    "type": "integer"
+                }
+            }
+        },
         "purchase.Purchase": {
             "type": "object",
             "properties": {
@@ -1943,6 +2126,17 @@ const docTemplate = `{
                 "StatusPaid",
                 "StatusCanceled"
             ]
+        },
+        "purchase.StatusTotal": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "count": {
+                    "type": "integer"
+                }
+            }
         },
         "purchase.UpdatePurchaseRequest": {
             "type": "object",

@@ -1,6 +1,9 @@
 package purchase
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // mockPurchaseRepository is a test double for Repository.
 // Each method falls back gracefully when its Fn field is nil (nil-check pattern).
@@ -12,6 +15,14 @@ type mockPurchaseRepository struct {
 	DeleteFn  func(ctx context.Context, userID, id int64) (bool, error)
 
 	SummarizeFn func(ctx context.Context, userID int64, ranges SummaryRanges) (*SummarySums, error)
+	OverviewFn  func(ctx context.Context, userID int64, monthStart, monthEnd time.Time) (*OverviewData, error)
+}
+
+func (m *mockPurchaseRepository) Overview(ctx context.Context, userID int64, monthStart, monthEnd time.Time) (*OverviewData, error) {
+	if m.OverviewFn == nil {
+		return &OverviewData{}, nil
+	}
+	return m.OverviewFn(ctx, userID, monthStart, monthEnd)
 }
 
 func (m *mockPurchaseRepository) Summarize(ctx context.Context, userID int64, ranges SummaryRanges) (*SummarySums, error) {
