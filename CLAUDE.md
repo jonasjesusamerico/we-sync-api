@@ -8,7 +8,7 @@ valem mais do que demonstrar padrões. Qualidade **não** se mede em número de 
 
 ## Stack (evidência: `go.mod`, `docker-compose.yml`)
 
-- Go 1.27.3, `net/http` + `go-chi/chi/v5`
+- Go 1.27.4, `net/http` + `go-chi/chi/v5`
 - PostgreSQL 17 via `database/sql` + driver `pgx/v5/stdlib` (sem ORM), pools separados `database.DB.Write` / `database.DB.Read`
 - Migrations SQL com `golang-migrate` (`migrations/NNNNNN_nome.{up,down}.sql`), executadas pelo serviço `migrate` do compose
 - Auth: JWT HS256 (`golang-jwt/jwt/v5`) + refresh token opaco (hash SHA-256 no banco) + `bcrypt`
