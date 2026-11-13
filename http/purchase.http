@@ -14,6 +14,7 @@
 #   icon           → TAG | HEART | SMILE | BOOK | CAR | HOUSE | FOOD | CARD | GIFT | SPARKLE
 #   color          → FOOD | TRANSPORT | HOME | HEALTH | EDUCATION | LEISURE (NEUTRAL only in responses)
 #   archived_at    → RFC 3339 or null
+#   previous_until_day → last day summed of the previous month (null in FULL_MONTH)
 
 @baseUrl = http://localhost:8080/api/v1
 @contentType = application/json
@@ -766,6 +767,11 @@ Authorization: Bearer {{accessToken}}
 GET {{baseUrl}}/purchases/summary?year=2027&month=3&today=2027-03-31
 Authorization: Bearer {{accessToken}}
 
+### SUMMARY — 31st against a 30-day month → 200 previous_until_day 30
+
+GET {{baseUrl}}/purchases/summary?year=2026&month=10&today=2026-10-31
+Authorization: Bearer {{accessToken}}
+
 ### SUMMARY — January of year 1 has no previous month → 200 NO_BASE
 
 GET {{baseUrl}}/purchases/summary?year=1&month=1&today=2026-11-10
@@ -779,6 +785,41 @@ Authorization: Bearer {{accessToken}}
 ### SUMMARY — Validation: month 13 → 400
 
 GET {{baseUrl}}/purchases/summary?year=2026&month=13&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OVERVIEW  GET /purchases/overview  → 200 | 400
+# Blocks of the home page from one snapshot; today decides the current month, the average and the forecast days.
+# ─────────────────────────────────────────────────────────────────────────────
+
+### OVERVIEW — Current month (average up to today, forecast days) → 200
+
+GET {{baseUrl}}/purchases/overview?year=2026&month=11&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+### OVERVIEW — Past month (average over the whole month) → 200
+
+GET {{baseUrl}}/purchases/overview?year=2026&month=9&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+### OVERVIEW — Future month → 200
+
+GET {{baseUrl}}/purchases/overview?year=2026&month=12&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+### OVERVIEW — Leap February has 29 days → 200
+
+GET {{baseUrl}}/purchases/overview?year=2028&month=2&today=2026-11-10
+Authorization: Bearer {{accessToken}}
+
+### OVERVIEW — Validation: missing today → 400
+
+GET {{baseUrl}}/purchases/overview?year=2026&month=11
+Authorization: Bearer {{accessToken}}
+
+### OVERVIEW — Validation: year 10000 → 400
+
+GET {{baseUrl}}/purchases/overview?year=10000&month=1&today=2026-11-10
 Authorization: Bearer {{accessToken}}
 
 # ─────────────────────────────────────────────────────────────────────────────

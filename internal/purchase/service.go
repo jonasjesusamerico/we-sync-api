@@ -214,19 +214,26 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (*PaginatedResult
 
 // summaryPlan is what Summary decides before reading the database.
 type summaryPlan struct {
-	ranges        SummaryRanges
-	period        ComparisonPeriod
-	untilDay      *int
-	previousYear  int
-	previousMonth int
+	ranges           SummaryRanges
+	period           ComparisonPeriod
+	untilDay         *int
+	previousUntilDay *int
+	previousYear     int
+	previousMonth    int
+}
+
+// monthBounds returns the first and the last day (UTC midnight) of the calendar month (RN-01 of
+// feature 007). year and month must already be in range. Pure: no clock, no database.
+func monthBounds(year, month int) (start, end time.Time) {
+	start = time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	// AddDate(0, 1, -1) is the last day of the month; December of 9999 stays in 9999.
+	return start, start.AddDate(0, 1, -1)
 }
 
 // summaryRanges plans the month (year, month) given the client's local date today.
 // year and month must already be in range. Pure: no clock, no database.
 func summaryRanges(year, month int, today time.Time) summaryPlan {
-	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-	// AddDate(0, 1, -1) is the last day of the month; December of 9999 stays in 9999.
-	monthEnd := monthStart.AddDate(0, 1, -1)
+	monthStart, monthEnd := monthBounds(year, month)
 
 	plan := summaryPlan{previousYear: year, previousMonth: month - 1}
 	if month == 1 {
@@ -248,8 +255,10 @@ func summaryRanges(year, month int, today time.Time) summaryPlan {
 		currentEnd = time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 		if hasPrevious {
 			// RN-02: when the previous month has no such day, it counts whole.
+			prevDay := min(day, previousMonthEnd.Day())
 			previousEnd = time.Date(plan.previousYear, time.Month(plan.previousMonth),
-				min(day, previousMonthEnd.Day()), 0, 0, 0, 0, time.UTC)
+				prevDay, 0, 0, 0, 0, time.UTC)
+			plan.previousUntilDay = &prevDay
 		}
 	} else {
 		plan.period = PeriodFullMonth
@@ -300,15 +309,8 @@ func (s *Service) Summary(ctx context.Context, year, month int, today time.Time)
 	if !ok {
 		return nil, apperrors.ErrUnauthorized
 	}
-	// The handler already answers 400; this guards other callers, since time.Date would
-	// normalize month 13 into January of the next year and sum the wrong month.
-	if year < minSummaryYear || year > maxSummaryYear {
-		err := apperrors.NewValidationError("year must be an integer between %d and %d", minSummaryYear, maxSummaryYear)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, err
-	}
-	if month < 1 || month > 12 {
-		err := apperrors.NewValidationError("month must be an integer between 1 and 12")
+	// The handler already answers 400; this guards other callers.
+	if err := validateMonth(year, month); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
@@ -345,16 +347,173 @@ func (s *Service) Summary(ctx context.Context, year, month int, today time.Time)
 		PurchaseCount: sums.MonthCount,
 		Spent:         sums.MonthSpent,
 		Comparison: Comparison{
-			Period:         plan.period,
-			UntilDay:       plan.untilDay,
-			PreviousYear:   plan.previousYear,
-			PreviousMonth:  plan.previousMonth,
-			CurrentAmount:  sums.CurrentAmount,
-			PreviousAmount: previous,
-			Result:         result,
-			Percent:        percent,
+			Period:           plan.period,
+			UntilDay:         plan.untilDay,
+			PreviousUntilDay: plan.previousUntilDay,
+			PreviousYear:     plan.previousYear,
+			PreviousMonth:    plan.previousMonth,
+			CurrentAmount:    sums.CurrentAmount,
+			PreviousAmount:   previous,
+			Result:           result,
+			Percent:          percent,
 		},
 	}, nil
+}
+
+// validateMonth checks the year and month of the summary and the overview. time.Date would
+// normalize month 13 into January of the next year and read the wrong month.
+func validateMonth(year, month int) error {
+	if year < minSummaryYear || year > maxSummaryYear {
+		return apperrors.NewValidationError("year must be an integer between %d and %d", minSummaryYear, maxSummaryYear)
+	}
+	if month < 1 || month > 12 {
+		return apperrors.NewValidationError("month must be an integer between 1 and 12")
+	}
+	return nil
+}
+
+// sharePercent is amount as a percent of spent, rounded half up (RN-10 of feature 007).
+// The shares may add up to 99 or 101.
+func sharePercent(amount, spent decimal.Decimal) int64 {
+	// decimal.Div panics on a zero divisor; there are no shares when spent is 0 anyway.
+	if spent.Sign() <= 0 {
+		return 0
+	}
+	// Multiplying first keeps an exact k.5 exact, as in compare.
+	return amount.Mul(hundred).Div(spent).Round(0).IntPart()
+}
+
+// buildOverview assembles the month overview from what the repository read (ADR-02 of feature 007).
+// year and month must already be in range and data must not be nil. Pure: no clock, no database.
+// It fails only when a day row falls outside the month, which the SQL never produces.
+func buildOverview(year, month int, today time.Time, data *OverviewData) (*MonthOverview, error) {
+	start, end := monthBounds(year, month)
+	daysInMonth := end.Day()
+	isCurrent := today.Year() == year && int(today.Month()) == month
+
+	daily := make([]DayAmount, daysInMonth)
+	for i := range daily {
+		daily[i] = DayAmount{Day: i + 1, Amount: decimal.Zero, Forecast: isCurrent && i+1 > today.Day()}
+	}
+
+	// Summed in Go over at most 31 already aggregated rows (ADR-02 of feature 007).
+	paid := StatusTotal{Amount: decimal.Zero}
+	pending := StatusTotal{Amount: decimal.Zero}
+	for _, d := range data.Days {
+		if d.Date.Year() != start.Year() || d.Date.Month() != start.Month() {
+			return nil, fmt.Errorf("purchaseService.buildOverview: day %s outside %04d-%02d",
+				d.Date.Format(dateLayout), year, month)
+		}
+		daily[d.Date.Day()-1].Amount = d.PaidAmount.Add(d.PendingAmount)
+		paid.Amount = paid.Amount.Add(d.PaidAmount)
+		paid.Count += d.PaidCount
+		pending.Amount = pending.Amount.Add(d.PendingAmount)
+		pending.Count += d.PendingCount
+	}
+	spent := paid.Amount.Add(pending.Amount)
+
+	// RN-06: the current month counts up to today; any other month counts whole.
+	avgDays, avgSum := daysInMonth, spent
+	if isCurrent {
+		avgDays, avgSum = today.Day(), decimal.Zero
+		for _, d := range daily[:avgDays] {
+			avgSum = avgSum.Add(d.Amount)
+		}
+	}
+	// Round(2) rounds half away from zero, which for a value >= 0 is "half a cent up". An exact half
+	// cent has a finite representation, so Div (16 digits) keeps it exact.
+	average := DailyAverage{Amount: avgSum.Div(decimal.NewFromInt(int64(avgDays))).Round(2), Days: avgDays}
+
+	// RN-09: the first day with the highest amount; none when nothing was spent.
+	var peakDay *int
+	peak := decimal.Zero
+	for i := range daily {
+		if daily[i].Amount.GreaterThan(peak) {
+			peak = daily[i].Amount
+			day := daily[i].Day
+			peakDay = &day
+		}
+	}
+
+	// The order of the shares is the SQL's (RN-10).
+	categories := make([]CategoryShare, 0, len(data.Categories))
+	for _, c := range data.Categories {
+		categories = append(categories, CategoryShare{Category: c.Category, Amount: c.Amount, Percent: sharePercent(c.Amount, spent)})
+	}
+	paymentMethods := make([]PaymentMethodShare, 0, len(data.PaymentMethods))
+	for _, pm := range data.PaymentMethods {
+		paymentMethods = append(paymentMethods, PaymentMethodShare{
+			PaymentMethod: pm.PaymentMethod, Amount: pm.Amount, Percent: sharePercent(pm.Amount, spent),
+		})
+	}
+	latest := data.Latest
+	if latest == nil {
+		latest = []Purchase{}
+	}
+
+	return &MonthOverview{
+		Year:           year,
+		Month:          month,
+		DaysInMonth:    daysInMonth,
+		IsCurrentMonth: isCurrent,
+		Paid:           paid,
+		Pending:        pending,
+		ActiveCount:    paid.Count + pending.Count,
+		Spent:          spent,
+		DailyAverage:   average,
+		PeakDay:        peakDay,
+		Daily:          daily,
+		Categories:     categories,
+		PaymentMethods: paymentMethods,
+		Latest:         latest,
+	}, nil
+}
+
+// Overview returns the blocks of the month for the home page (feature 007). today is the client's
+// local date: it decides the current month, the daily average and the forecast days.
+func (s *Service) Overview(ctx context.Context, year, month int, today time.Time) (*MonthOverview, error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "purchaseService.Overview")
+	defer span.End()
+
+	userID, ok := identity.UserIDFromContext(ctx)
+	if !ok {
+		return nil, apperrors.ErrUnauthorized
+	}
+	// The handler already answers 400; this guards other callers.
+	if err := validateMonth(year, month); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	start, end := monthBounds(year, month)
+	span.SetAttributes(
+		attribute.Int("purchase.overview.year", year),
+		attribute.Int("purchase.overview.month", month),
+		attribute.Bool("purchase.overview.is_current_month", today.Year() == year && int(today.Month()) == month),
+	)
+
+	data, err := s.repo.Overview(ctx, userID, start, end)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("purchaseService.Overview: %w", err)
+	}
+	if data == nil {
+		err := fmt.Errorf("purchaseService.Overview: repository returned no data")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	ov, err := buildOverview(year, month, today, data)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	span.SetAttributes(attribute.Int("purchase.overview.active_count", ov.ActiveCount))
+	return ov, nil
 }
 
 // Update validates and applies changes to an existing purchase entry.

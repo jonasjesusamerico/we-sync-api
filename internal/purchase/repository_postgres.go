@@ -255,38 +255,11 @@ func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) (*Pagi
 
 	items := []Purchase{}
 	for rows.Next() {
-		var p Purchase
-		var amountStr string
-		var catUserID, pmUserID sql.NullInt64
-		if err := rows.Scan(
-			&p.ID,
-			&p.UserID,
-			&p.PurchaseDate.Time,
-			&p.Description,
-			&amountStr,
-			&p.Status,
-			&p.CreatedAt,
-			&p.UpdatedAt,
-			&p.Category.ID,
-			&catUserID,
-			&p.Category.Name,
-			&p.Category.Icon,
-			&p.Category.Color,
-			&p.PaymentMethod.ID,
-			&pmUserID,
-			&p.PaymentMethod.Name,
-		); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return nil, fmt.Errorf("purchasePostgresRepository.List scan: %w", err)
-		}
-		p.Category.IsGlobal = !catUserID.Valid
-		p.PaymentMethod.IsGlobal = !pmUserID.Valid
-		p.Amount, err = decimal.NewFromString(amountStr)
+		p, err := scanPurchase(rows)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, fmt.Errorf("purchasePostgresRepository.List parse amount: %w", err)
+			return nil, fmt.Errorf("purchasePostgresRepository.List scan: %w", err)
 		}
 		items = append(items, p)
 	}
@@ -372,6 +345,241 @@ func (r *PostgresRepository) Summarize(ctx context.Context, userID int64, ranges
 	}
 
 	return &sums, nil
+}
+
+// rowScanner is satisfied by *sql.Rows and *sql.Row.
+type rowScanner interface{ Scan(dest ...any) error }
+
+// scanPurchase reads one purchase in the column order of the List SELECT:
+// pe.id, pe.user_id, pe.purchase_date, pe.description, pe.amount, pe.status, pe.created_at,
+// pe.updated_at, c.id, c.user_id, c.name, c.icon, c.color, pm.id, pm.user_id, pm.name.
+// The caller wraps the error with its own prefix.
+func scanPurchase(row rowScanner) (Purchase, error) {
+	var p Purchase
+	var amountStr string
+	var catUserID, pmUserID sql.NullInt64
+	if err := row.Scan(
+		&p.ID,
+		&p.UserID,
+		&p.PurchaseDate.Time,
+		&p.Description,
+		&amountStr,
+		&p.Status,
+		&p.CreatedAt,
+		&p.UpdatedAt,
+		&p.Category.ID,
+		&catUserID,
+		&p.Category.Name,
+		&p.Category.Icon,
+		&p.Category.Color,
+		&p.PaymentMethod.ID,
+		&pmUserID,
+		&p.PaymentMethod.Name,
+	); err != nil {
+		return Purchase{}, err
+	}
+	p.Category.IsGlobal = !catUserID.Valid
+	p.PaymentMethod.IsGlobal = !pmUserID.Valid
+	amount, err := decimal.NewFromString(amountStr)
+	if err != nil {
+		return Purchase{}, fmt.Errorf("parse amount: %w", err)
+	}
+	p.Amount = amount
+	return p, nil
+}
+
+// Overview reads the blocks of the month in one read-only REPEATABLE READ transaction (ADR-03 of
+// feature 007): the four reads see the same snapshot, so the blocks always add up to each other.
+// All bounds are inclusive dates, like Summarize: December of 9999 never needs the year 10000.
+func (r *PostgresRepository) Overview(ctx context.Context, userID int64, monthStart, monthEnd time.Time) (*OverviewData, error) {
+	ctx, span := otel.Tracer(repoTracerName).Start(ctx, "db.purchase_entries.select_overview")
+	defer span.End()
+	span.SetAttributes(dbAttrs("SELECT", "purchase_entries")...)
+
+	// One timeout for the whole transaction.
+	ctx, cancel := context.WithTimeout(ctx, dbTimeout)
+	defer cancel()
+
+	fail := func(step string, err error) (*OverviewData, error) {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("purchasePostgresRepository.Overview %s: %w", step, err)
+	}
+
+	tx, err := r.db.Read.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return fail("begin", err)
+	}
+	// No-op after Commit (sql.ErrTxDone); read-only, so nothing to undo.
+	defer func() { _ = tx.Rollback() }()
+
+	days, err := overviewDays(ctx, tx, userID, monthStart, monthEnd)
+	if err != nil {
+		return fail("days", err)
+	}
+	categories, err := overviewCategories(ctx, tx, userID, monthStart, monthEnd)
+	if err != nil {
+		return fail("categories", err)
+	}
+	paymentMethods, err := overviewPaymentMethods(ctx, tx, userID, monthStart, monthEnd)
+	if err != nil {
+		return fail("payment methods", err)
+	}
+	latest, err := overviewLatest(ctx, tx, userID, monthStart, monthEnd)
+	if err != nil {
+		return fail("latest", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fail("commit", err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("db.result.days", len(days)),
+		attribute.Int("db.result.categories", len(categories)),
+		attribute.Int("db.result.payment_methods", len(paymentMethods)),
+		attribute.Int("db.result.latest", len(latest)),
+	)
+	return &OverviewData{Days: days, Categories: categories, PaymentMethods: paymentMethods, Latest: latest}, nil
+}
+
+// overviewDays sums PAID and PENDING per day of the month (at most 31 rows).
+func overviewDays(ctx context.Context, tx *sql.Tx, userID int64, monthStart, monthEnd time.Time) ([]DayTotals, error) {
+	const query = `
+		SELECT pe.purchase_date,
+		       COALESCE(SUM(pe.amount) FILTER (WHERE pe.status = 'PAID'), 0),
+		       COUNT(*)                FILTER (WHERE pe.status = 'PAID'),
+		       COALESCE(SUM(pe.amount) FILTER (WHERE pe.status = 'PENDING'), 0),
+		       COUNT(*)                FILTER (WHERE pe.status = 'PENDING')
+		FROM   purchase_entries pe
+		WHERE  pe.user_id = $1 AND pe.purchase_date >= $2 AND pe.purchase_date <= $3
+		  AND  pe.status <> 'CANCELED'
+		GROUP  BY pe.purchase_date
+		ORDER  BY pe.purchase_date`
+
+	rows, err := tx.QueryContext(ctx, query, userID, monthStart, monthEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	days := []DayTotals{}
+	for rows.Next() {
+		var d DayTotals
+		var paidStr, pendingStr string
+		if err := rows.Scan(&d.Date, &paidStr, &d.PaidCount, &pendingStr, &d.PendingCount); err != nil {
+			return nil, err
+		}
+		if d.PaidAmount, err = decimal.NewFromString(paidStr); err != nil {
+			return nil, fmt.Errorf("parse amount: %w", err)
+		}
+		if d.PendingAmount, err = decimal.NewFromString(pendingStr); err != nil {
+			return nil, fmt.Errorf("parse amount: %w", err)
+		}
+		days = append(days, d)
+	}
+	return days, rows.Err()
+}
+
+// overviewCategories sums PAID and PENDING per category, archived ones included (RN-10 of feature 007).
+// GROUP BY c.id is enough: it is the primary key, and the other columns depend on it.
+func overviewCategories(ctx context.Context, tx *sql.Tx, userID int64, monthStart, monthEnd time.Time) ([]CategoryTotal, error) {
+	const query = `
+		SELECT c.id, c.user_id, c.name, c.icon, c.color, SUM(pe.amount)
+		FROM   purchase_entries pe
+		JOIN   categories c ON c.id = pe.category_id
+		WHERE  pe.user_id = $1 AND pe.purchase_date >= $2 AND pe.purchase_date <= $3
+		  AND  pe.status <> 'CANCELED'
+		GROUP  BY c.id
+		ORDER  BY SUM(pe.amount) DESC, catalog_name_key(c.name), c.id`
+
+	rows, err := tx.QueryContext(ctx, query, userID, monthStart, monthEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	totals := []CategoryTotal{}
+	for rows.Next() {
+		var ct CategoryTotal
+		var catUserID sql.NullInt64
+		var amountStr string
+		if err := rows.Scan(&ct.Category.ID, &catUserID, &ct.Category.Name, &ct.Category.Icon,
+			&ct.Category.Color, &amountStr); err != nil {
+			return nil, err
+		}
+		ct.Category.IsGlobal = !catUserID.Valid
+		if ct.Amount, err = decimal.NewFromString(amountStr); err != nil {
+			return nil, fmt.Errorf("parse amount: %w", err)
+		}
+		totals = append(totals, ct)
+	}
+	return totals, rows.Err()
+}
+
+// overviewPaymentMethods sums PAID and PENDING per payment method, archived ones included.
+func overviewPaymentMethods(ctx context.Context, tx *sql.Tx, userID int64, monthStart, monthEnd time.Time) ([]PaymentMethodTotal, error) {
+	const query = `
+		SELECT pm.id, pm.user_id, pm.name, SUM(pe.amount)
+		FROM   purchase_entries pe
+		JOIN   payment_methods pm ON pm.id = pe.payment_method_id
+		WHERE  pe.user_id = $1 AND pe.purchase_date >= $2 AND pe.purchase_date <= $3
+		  AND  pe.status <> 'CANCELED'
+		GROUP  BY pm.id
+		ORDER  BY SUM(pe.amount) DESC, catalog_name_key(pm.name), pm.id`
+
+	rows, err := tx.QueryContext(ctx, query, userID, monthStart, monthEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	totals := []PaymentMethodTotal{}
+	for rows.Next() {
+		var pt PaymentMethodTotal
+		var pmUserID sql.NullInt64
+		var amountStr string
+		if err := rows.Scan(&pt.PaymentMethod.ID, &pmUserID, &pt.PaymentMethod.Name, &amountStr); err != nil {
+			return nil, err
+		}
+		pt.PaymentMethod.IsGlobal = !pmUserID.Valid
+		if pt.Amount, err = decimal.NewFromString(amountStr); err != nil {
+			return nil, fmt.Errorf("parse amount: %w", err)
+		}
+		totals = append(totals, pt)
+	}
+	return totals, rows.Err()
+}
+
+// overviewLatest reads the month's newest purchases of every status (RN-07 of feature 007), in the
+// order of the purchase list.
+func overviewLatest(ctx context.Context, tx *sql.Tx, userID int64, monthStart, monthEnd time.Time) ([]Purchase, error) {
+	const query = `
+		SELECT pe.id, pe.user_id, pe.purchase_date, pe.description,
+		       pe.amount, pe.status, pe.created_at, pe.updated_at,
+		       c.id, c.user_id, c.name, c.icon, c.color,
+		       pm.id, pm.user_id, pm.name
+		FROM   purchase_entries pe
+		JOIN   categories c ON c.id = pe.category_id
+		JOIN   payment_methods pm ON pm.id = pe.payment_method_id
+		WHERE  pe.user_id = $1 AND pe.purchase_date >= $2 AND pe.purchase_date <= $3
+		ORDER  BY pe.purchase_date DESC, pe.id DESC
+		LIMIT  $4`
+
+	rows, err := tx.QueryContext(ctx, query, userID, monthStart, monthEnd, overviewLatestLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	latest := []Purchase{}
+	for rows.Next() {
+		p, err := scanPurchase(rows)
+		if err != nil {
+			return nil, err
+		}
+		latest = append(latest, p)
+	}
+	return latest, rows.Err()
 }
 
 // listWhere builds the WHERE clause and its positional arguments for List.

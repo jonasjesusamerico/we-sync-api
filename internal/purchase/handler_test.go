@@ -32,7 +32,15 @@ type mockPurchaseService struct {
 	UpdateFn  func(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
 	DeleteFn  func(ctx context.Context, id int64) error
 
-	SummaryFn func(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error)
+	SummaryFn  func(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error)
+	OverviewFn func(ctx context.Context, year, month int, today time.Time) (*MonthOverview, error)
+}
+
+func (m *mockPurchaseService) Overview(ctx context.Context, year, month int, today time.Time) (*MonthOverview, error) {
+	if m.OverviewFn == nil {
+		return &MonthOverview{}, nil
+	}
+	return m.OverviewFn(ctx, year, month, today)
 }
 
 func (m *mockPurchaseService) Summary(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error) {
@@ -678,7 +686,7 @@ func ca03Summary() *MonthSummary {
 	return &MonthSummary{
 		Year: 2026, Month: 11, PurchaseCount: 3, Spent: decimal.RequireFromString("150.00"),
 		Comparison: Comparison{
-			Period: PeriodUntilDay, UntilDay: intPtr(10), PreviousYear: 2026, PreviousMonth: 10,
+			Period: PeriodUntilDay, UntilDay: intPtr(10), PreviousUntilDay: intPtr(10), PreviousYear: 2026, PreviousMonth: 10,
 			CurrentAmount: decimal.RequireFromString("100.00"), PreviousAmount: decimal.RequireFromString("200.00"),
 			Result: ResultLess, Percent: int64Ptr(50),
 		},
@@ -718,13 +726,14 @@ func TestHandler_Summary_Success(t *testing.T) {
 	}
 	assertExactKeys(t, body, "year", "month", "purchase_count", "spent", "comparison")
 	cmp, _ := body["comparison"].(map[string]any)
-	assertExactKeys(t, cmp, "period", "until_day", "previous_year", "previous_month",
+	assertExactKeys(t, cmp, "period", "until_day", "previous_until_day", "previous_year", "previous_month",
 		"current_amount", "previous_amount", "result", "percent")
 
 	if body["spent"] != "150" || body["purchase_count"] != float64(3) {
 		t.Errorf("spent = %#v, purchase_count = %#v", body["spent"], body["purchase_count"])
 	}
-	if cmp["until_day"] != float64(10) || cmp["percent"] != float64(50) || cmp["result"] != "LESS" ||
+	if cmp["until_day"] != float64(10) || cmp["previous_until_day"] != float64(10) ||
+		cmp["percent"] != float64(50) || cmp["result"] != "LESS" ||
 		cmp["period"] != "UNTIL_DAY" || cmp["current_amount"] != "100" || cmp["previous_amount"] != "200" {
 		t.Errorf("comparison = %#v", cmp)
 	}
@@ -747,7 +756,7 @@ func TestHandler_Summary_NullFields(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"until_day", "percent"} {
+	for _, k := range []string{"until_day", "previous_until_day", "percent"} {
 		v, ok := body.Comparison[k]
 		if !ok || v != nil {
 			t.Errorf("%s: present=%v value=%#v, want present and null", k, ok, v)
@@ -755,30 +764,33 @@ func TestHandler_Summary_NullFields(t *testing.T) {
 	}
 }
 
+const (
+	yearMsg  = "year must be an integer between 1 and 9999"
+	monthMsg = "month must be an integer between 1 and 12"
+	todayMsg = "today must be a date in YYYY-MM-DD format"
+)
+
+// monthQueryCases are the invalid queries of GET /purchases/summary and GET /purchases/overview.
+var monthQueryCases = []struct {
+	query string
+	want  string
+}{
+	{"month=11&today=2026-11-10", yearMsg},
+	{"year=0&month=11&today=2026-11-10", yearMsg},
+	{"year=10000&month=11&today=2026-11-10", yearMsg},
+	{"year=abc&month=11&today=2026-11-10", yearMsg},
+	{"year=2026&today=2026-11-10", monthMsg},
+	{"year=2026&month=0&today=2026-11-10", monthMsg},
+	{"year=2026&month=13&today=2026-11-10", monthMsg},
+	{"year=2026&month=11", todayMsg},
+	{"year=2026&month=11&today=2026-11-31", todayMsg},
+	{"year=2026&month=11&today=10/11/2026", todayMsg},
+	{"year=2026&month=11&today=2026-11-10T00:00:00Z", todayMsg},
+	{"year=abc&month=13", yearMsg},
+}
+
 func TestHandler_Summary_InvalidQuery(t *testing.T) {
-	const (
-		yearMsg  = "year must be an integer between 1 and 9999"
-		monthMsg = "month must be an integer between 1 and 12"
-		todayMsg = "today must be a date in YYYY-MM-DD format"
-	)
-	tests := []struct {
-		query string
-		want  string
-	}{
-		{"month=11&today=2026-11-10", yearMsg},
-		{"year=0&month=11&today=2026-11-10", yearMsg},
-		{"year=10000&month=11&today=2026-11-10", yearMsg},
-		{"year=abc&month=11&today=2026-11-10", yearMsg},
-		{"year=2026&today=2026-11-10", monthMsg},
-		{"year=2026&month=0&today=2026-11-10", monthMsg},
-		{"year=2026&month=13&today=2026-11-10", monthMsg},
-		{"year=2026&month=11", todayMsg},
-		{"year=2026&month=11&today=2026-11-31", todayMsg},
-		{"year=2026&month=11&today=10/11/2026", todayMsg},
-		{"year=2026&month=11&today=2026-11-10T00:00:00Z", todayMsg},
-		{"year=abc&month=13", yearMsg},
-	}
-	for _, tt := range tests {
+	for _, tt := range monthQueryCases {
 		t.Run(tt.query, func(t *testing.T) {
 			h := NewHandler(&mockPurchaseService{
 				SummaryFn: func(context.Context, int, int, time.Time) (*MonthSummary, error) {
@@ -855,5 +867,171 @@ func TestHandler_Get_CategoryIconColor(t *testing.T) {
 	want := `"category":{"id":101,"name":"Pets","is_global":false,"icon":"HEART","color":"LEISURE"}`
 	if !strings.Contains(rec.Body.String(), want) {
 		t.Fatalf("body %s does not contain %s", rec.Body.String(), want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Overview
+// ---------------------------------------------------------------------------
+
+// e1Overview is the contract example of GET /purchases/overview (today 2026-11-10).
+func e1Overview(t *testing.T) *MonthOverview {
+	t.Helper()
+	ov, err := buildOverview(2026, 11, nov(10), e1Data())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ov
+}
+
+func TestHandler_Overview_Success(t *testing.T) {
+	want := e1Overview(t)
+	h := NewHandler(&mockPurchaseService{
+		OverviewFn: func(_ context.Context, year, month int, today time.Time) (*MonthOverview, error) {
+			if year != 2026 || month != 11 || !today.Equal(time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)) {
+				t.Errorf("Overview(%d, %d, %v)", year, month, today)
+			}
+			return want, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.Overview(rec, httptest.NewRequest(http.MethodGet, "/purchases/overview?year=2026&month=11&today=2026-11-10", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	assertExactKeys(t, body, "year", "month", "days_in_month", "is_current_month", "paid", "pending", "active_count",
+		"spent", "daily_average", "peak_day", "daily", "categories", "payment_methods", "latest")
+
+	paid, _ := body["paid"].(map[string]any)
+	assertExactKeys(t, paid, "amount", "count")
+	avg, _ := body["daily_average"].(map[string]any)
+	assertExactKeys(t, avg, "amount", "days")
+	daily, _ := body["daily"].([]any)
+	if len(daily) != 30 {
+		t.Fatalf("len(daily) = %d, want 30", len(daily))
+	}
+	day0, _ := daily[0].(map[string]any)
+	assertExactKeys(t, day0, "day", "amount", "forecast")
+	day25, _ := daily[24].(map[string]any)
+	if day25["day"] != float64(25) || day25["amount"] != "1000" || day25["forecast"] != true {
+		t.Errorf("daily[24] = %#v", day25)
+	}
+	cats, _ := body["categories"].([]any)
+	cat0, _ := cats[0].(map[string]any)
+	assertExactKeys(t, cat0, "category", "amount", "percent")
+	catSummary, _ := cat0["category"].(map[string]any)
+	assertExactKeys(t, catSummary, "id", "name", "is_global", "icon", "color")
+	pms, _ := body["payment_methods"].([]any)
+	pm0, _ := pms[0].(map[string]any)
+	assertExactKeys(t, pm0, "payment_method", "amount", "percent")
+	latest, _ := body["latest"].([]any)
+	latest0, _ := latest[0].(map[string]any)
+	latest1, _ := latest[1].(map[string]any)
+
+	if body["spent"] != "1200" || paid["amount"] != "200" || avg["amount"] != "20" || body["peak_day"] != float64(25) {
+		t.Errorf("spent %#v paid %#v average %#v peak %#v", body["spent"], paid["amount"], avg["amount"], body["peak_day"])
+	}
+	if cat0["percent"] != float64(83) || catSummary["icon"] != "HOUSE" {
+		t.Errorf("categories[0] = %#v", cat0)
+	}
+	if latest0["id"] != float64(105) || latest1["status"] != "CANCELED" {
+		t.Errorf("latest[0] = %#v, latest[1] = %#v", latest0, latest1)
+	}
+}
+
+func TestHandler_Overview_EmptyMonth(t *testing.T) {
+	empty, err := buildOverview(2026, 12, nov(10), &OverviewData{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(&mockPurchaseService{
+		OverviewFn: func(context.Context, int, int, time.Time) (*MonthOverview, error) { return empty, nil },
+	})
+	rec := httptest.NewRecorder()
+	h.Overview(rec, httptest.NewRequest(http.MethodGet, "/purchases/overview?year=2026&month=12&today=2026-11-10", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	raw := rec.Body.String()
+	for _, want := range []string{`"categories":[]`, `"payment_methods":[]`, `"latest":[]`} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("body does not contain %s: %s", want, raw)
+		}
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := body["peak_day"]; !ok || v != nil {
+		t.Errorf("peak_day: present=%v value=%#v, want present and null", ok, v)
+	}
+	avg, _ := body["daily_average"].(map[string]any)
+	if body["spent"] != "0" || avg["amount"] != "0" || avg["days"] != float64(31) {
+		t.Errorf("spent %#v daily_average %#v", body["spent"], avg)
+	}
+}
+
+func TestHandler_Overview_InvalidQuery(t *testing.T) {
+	for _, tt := range monthQueryCases {
+		t.Run(tt.query, func(t *testing.T) {
+			h := NewHandler(&mockPurchaseService{
+				OverviewFn: func(context.Context, int, int, time.Time) (*MonthOverview, error) {
+					t.Error("service must not be called")
+					return nil, nil
+				},
+			})
+			rec := httptest.NewRecorder()
+			h.Overview(rec, httptest.NewRequest(http.MethodGet, "/purchases/overview?"+tt.query, nil))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", rec.Code)
+			}
+			body := decodeError(t, rec.Body)
+			if body.Code != httputil.ErrCodeBadRequest || body.Message != tt.want {
+				t.Errorf("body = %+v, want message %q", body, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandler_Overview_Errors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+		wantMsg  string
+	}{
+		{"unauthorized", apperrors.ErrUnauthorized, http.StatusUnauthorized, httputil.ErrCodeUnauthorized, "authentication required"},
+		{"validation", apperrors.NewValidationError("month must be an integer between 1 and 12"),
+			http.StatusUnprocessableEntity, httputil.ErrCodeValidation, "month must be an integer between 1 and 12"},
+		{"internal", errors.New("pq: connection refused"), http.StatusInternalServerError, httputil.ErrCodeInternalServerError, "internal server error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(&mockPurchaseService{
+				OverviewFn: func(context.Context, int, int, time.Time) (*MonthOverview, error) { return nil, tt.err },
+			})
+			rec := httptest.NewRecorder()
+			h.Overview(rec, httptest.NewRequest(http.MethodGet, "/purchases/overview?year=2026&month=11&today=2026-11-10", nil))
+
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+			raw := rec.Body.String()
+			if strings.Contains(raw, "pq:") {
+				t.Errorf("internal detail leaked: %s", raw)
+			}
+			body := decodeError(t, bytes.NewBufferString(raw))
+			if body.Code != tt.wantBody || body.Message != tt.wantMsg {
+				t.Errorf("body = %+v", body)
+			}
+		})
 	}
 }

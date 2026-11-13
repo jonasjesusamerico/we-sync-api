@@ -25,6 +25,7 @@ type service interface {
 	Update(ctx context.Context, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
 	Delete(ctx context.Context, id int64) error
 	Summary(ctx context.Context, year, month int, today time.Time) (*MonthSummary, error)
+	Overview(ctx context.Context, year, month int, today time.Time) (*MonthOverview, error)
 }
 
 // Handler handles HTTP requests for purchase entries.
@@ -166,6 +167,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Description Spent amount of the month (PAID + PENDING, every day of the month) and the comparison with the
 // @Description previous month over the same period: up to today's day when the month is today's month, else the
 // @Description whole months. today is the client's local date and only decides the period.
+// @Description previous_until_day is the last day summed of the previous month (null in FULL_MONTH).
 // @Tags        purchases
 // @Produce     json
 // @Param       year  query    int    true "Year (1-9999)"
@@ -176,22 +178,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object} httputil.APIError "Internal server error"
 // @Router      /purchases/summary [get]
 func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	// A missing parameter is invalid too, with the same message.
-	year, err := strconv.Atoi(q.Get("year"))
-	if err != nil || year < minSummaryYear || year > maxSummaryYear {
-		httputil.WriteBadRequest(w, "year must be an integer between 1 and 9999")
-		return
-	}
-	month, err := strconv.Atoi(q.Get("month"))
-	if err != nil || month < 1 || month > 12 {
-		httputil.WriteBadRequest(w, "month must be an integer between 1 and 12")
-		return
-	}
-	today, err := time.Parse(dateLayout, q.Get("today"))
-	if err != nil {
-		httputil.WriteBadRequest(w, "today must be a date in YYYY-MM-DD format")
+	year, month, today, ok := parseMonthQuery(w, r)
+	if !ok {
 		return
 	}
 
@@ -202,6 +190,61 @@ func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, summary)
+}
+
+// Overview handles GET /purchases/overview
+//
+// @Summary     Month overview of the home page
+// @Description KPIs, spending per day, per category and per payment method (PAID + PENDING of the whole month)
+// @Description and the 6 latest purchases of any status, all read from one database snapshot. today is the
+// @Description client's local date: it decides the current month, the daily average and the forecast days.
+// @Tags        purchases
+// @Produce     json
+// @Param       year  query    int    true "Year (1-9999)"
+// @Param       month query    int    true "Month (1-12)"
+// @Param       today query    string true "Client local date (YYYY-MM-DD)"
+// @Success     200   {object} MonthOverview
+// @Failure     400   {object} httputil.APIError "Missing or invalid year, month or today"
+// @Failure     401   {object} httputil.APIError "Missing or invalid token"
+// @Failure     500   {object} httputil.APIError "Internal server error"
+// @Router      /purchases/overview [get]
+func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
+	year, month, today, ok := parseMonthQuery(w, r)
+	if !ok {
+		return
+	}
+
+	overview, err := h.svc.Overview(r.Context(), year, month, today)
+	if err != nil {
+		h.handleError(w, r, err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, overview)
+}
+
+// parseMonthQuery reads year, month and today of the summary and the overview, in this order.
+// On the first invalid parameter it writes the 400 and returns ok = false.
+func parseMonthQuery(w http.ResponseWriter, r *http.Request) (year, month int, today time.Time, ok bool) {
+	q := r.URL.Query()
+
+	// A missing parameter is invalid too, with the same message.
+	year, err := strconv.Atoi(q.Get("year"))
+	if err != nil || year < minSummaryYear || year > maxSummaryYear {
+		httputil.WriteBadRequest(w, "year must be an integer between 1 and 9999")
+		return 0, 0, time.Time{}, false
+	}
+	month, err = strconv.Atoi(q.Get("month"))
+	if err != nil || month < 1 || month > 12 {
+		httputil.WriteBadRequest(w, "month must be an integer between 1 and 12")
+		return 0, 0, time.Time{}, false
+	}
+	today, err = time.Parse(dateLayout, q.Get("today"))
+	if err != nil {
+		httputil.WriteBadRequest(w, "today must be a date in YYYY-MM-DD format")
+		return 0, 0, time.Time{}, false
+	}
+	return year, month, today, true
 }
 
 // GetByID handles GET /purchases/{id}

@@ -1,6 +1,9 @@
 package purchase
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Repository is the outbound port for purchase entry persistence.
 // Implementations must use (nil, nil) to signal "not found" on GetByID and Update.
@@ -18,6 +21,13 @@ type Repository interface {
 	// returns (nil, nil). Amounts exclude CANCELED; MonthCount counts every status.
 	// It reads from the read pool (same lag note as List).
 	Summarize(ctx context.Context, userID int64, ranges SummaryRanges) (*SummarySums, error)
+	// Overview reads the blocks of the month [monthStart, monthEnd] (inclusive dates) for userID in
+	// one read-only REPEATABLE READ transaction, so every block sees the same snapshot and they always
+	// add up to each other. It never returns (nil, nil); an empty month gives empty slices.
+	// Days, Categories and PaymentMethods exclude CANCELED; Latest has every status. Archived
+	// categories and payment methods are included, with their current name, icon and color.
+	// It reads from the read pool (same lag note as List).
+	Overview(ctx context.Context, userID int64, monthStart, monthEnd time.Time) (*OverviewData, error)
 	Update(ctx context.Context, userID, id int64, req *UpdatePurchaseRequest) (*Purchase, error)
 	Delete(ctx context.Context, userID, id int64) (bool, error)
 }
