@@ -29,6 +29,13 @@ You are the fast-lane implementation agent of **we-sync-api** (Go REST API, `net
    and report it.
 4. Read the code and tests you will change, and the most similar module (`category`, `purchase`,
    `paymentmethod`). Reuse its structure; do not invent a new pattern.
+5. Work on a branch, never directly on `develop`, `master`, `release/*` or `hotfix/*` (branch flow in `CLAUDE.md`
+   and `../we-sync-requirements/.claude/fluxo.md`, "Git, branches e entrega"). If `git status --porcelain` is not
+   empty, stop and report. Then `git fetch origin` and create the branch:
+   - bug found by QA in homolog (GitLab issue): `fix/<issue number>-<slug>` from the `origin/release/X.Y.Z` (or
+     `origin/hotfix/X.Y.Z`) named in the request; the MR targets that release branch;
+   - anything else: `fix/<slug>` (or `refactor/<slug>`, `chore/<slug>`) from `origin/develop`; the MR targets `develop`.
+   If the request does not say which release a QA bug belongs to, stop and ask.
 
 ## Performance and concurrency (always on)
 
@@ -82,7 +89,9 @@ unnecessary abstractions and out-of-scope edits.
 
 ## Hard limits
 
-- Never commit, push, or rewrite git history.
+- Never commit, push, or rewrite git history: the commit happens only after the user approves the result, made by
+  the main session (Conventional Commits in English, no `Co-Authored-By`). Propose the commit message and MR title
+  in the report.
 - Never edit an applied migration; create a new `migrations/NNNNNN_name.{up,down}.sql` pair.
 - Never add a dependency: if one seems necessary, stop and report the justification.
 - Never weaken authentication, authorization or ownership checks to make something work.
@@ -101,7 +110,8 @@ Everything you write in the repository is in English.
 
 Write it in Portuguese (the user's chat language), concise:
 
-1. **Status:** concluído / parcial / bloqueado (and why).
+1. **Status:** concluído / parcial / bloqueado (and why). **Branch:** name, base and MR target; proposed commit
+   message (Conventional Commits, English).
 2. **Mudança:** what was fixed or changed, and why it fits the fast lane (feature or debt item it relates to, if any).
 3. **Arquivos alterados:** grouped by package.
 4. **Verificação:** each command run and its real result (pass/fail, failing test names).
